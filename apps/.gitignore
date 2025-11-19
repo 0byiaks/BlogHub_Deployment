@@ -1,0 +1,33 @@
+# PID files
+*.pid
+logs/*.pid
+
+# Log files
+*.log
+logs/*.log
+
+# Logs directory (but keep the directory itself)
+logs/
+!logs/.gitkeep
+
+# Node modules
+node_modules/
+
+# Environment files
+.env
+.env.local
+
+# Build outputs
+dist/
+build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+

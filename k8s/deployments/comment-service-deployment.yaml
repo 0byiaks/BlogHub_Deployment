@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comment-service
+  namespace: bloghub
+  labels:
+    app: comment-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: comment-service
+  template:
+    metadata:
+      labels:
+        app: comment-service
+        tier: backend
+    spec:
+      containers:
+      - name: comment-service
+        image: 716769866080.dkr.ecr.eu-north-1.amazonaws.com/dev-bloghub:comment-service-latest
+        ports:
+        - containerPort: 3002
+          name: http
+        env:
+        - name: PORT
+          value: "3002"
+        - name: NODE_ENV
+          value: "production"
+        - name: POST_SERVICE_URL
+          value: "http://post-service:80"
+        - name: NOTIFICATION_SERVICE_URL
+          value: "http://notification-service:80"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 10
+          periodSeconds: 5
+

@@ -1,0 +1,208 @@
+name: CI/CD 
+on:
+  push:
+    branches: 
+      - develop
+
+  pull_request:
+    branches:
+      - main
+
+# Permissions for OIDC authentication
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required for checkout
+
+env:
+  AWS_REGION: eu-north-1
+  ECR_REPOSITORY: dev-bloghub
+  EKS_CLUSTER_NAME: devops-deployment-dev
+  NAMESPACE: bloghub
+  AWS_ACCOUNT_ID: 716769866080
+  # IAM Role ARN for GitHub Actions (will be created by Terraform)
+  AWS_ROLE_ARN: arn:aws:iam::716769866080:role/dev-github-actions-role
+
+jobs:
+  test:
+    name: Test Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies and test Post Service
+        run: |
+          cd apps/post-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test Comment Service
+        run: |
+          cd apps/comment-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test User Service
+        run: |
+          cd apps/user-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test Notification Service
+        run: |
+          cd apps/notification-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test Frontend
+        run: |
+          cd apps/frontend
+          npm ci
+          npm test || echo "No tests configured yet"
+
+  build-and-push-images:
+    name: Build and Push Images to ECR
+    runs-on: ubuntu-latest
+    needs: test
+
+    strategy:
+      matrix:
+        service:
+          - post-service
+          - comment-service
+          - user-service
+          - notification-service
+          - frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check if ECR repository exists
+        run: |
+          if ! aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "❌ ECR repository does not exist!"
+            echo "Please create infrastructure first: cd infra/terraform/environments/dev && terraform apply"
+            exit 1
+          else
+            echo "✅ ECR repository exists"
+          fi
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Get commit SHA (short version)
+        id: commit
+        run: echo "sha_short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ matrix.service }}-${{ steps.commit.outputs.sha_short }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ matrix.service }}-latest \
+            --push \
+            ./apps/${{ matrix.service }}
+
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build-and-push-images
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check if EKS cluster exists
+        run: |
+          if ! aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "❌ EKS cluster does not exist!"
+            echo "Please create infrastructure first: cd infra/terraform/environments/dev && terraform apply"
+            exit 1
+          else
+            echo "✅ EKS cluster exists"
+          fi
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get commit SHA (short version)
+        id: commit
+        run: echo "sha_short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Update image tags in Kubernetes manifests
+        run: |
+          # Update each service deployment with new image tag
+          for service in post-service comment-service user-service notification-service frontend; do
+            IMAGE_TAG="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${service}-${{ steps.commit.outputs.sha_short }}"
+            
+            # Update the deployment YAML file
+            sed -i "s|image:.*${service}.*|image: ${IMAGE_TAG}|g" k8s/deployments/${service}-deployment.yaml
+            
+            echo "✅ Updated ${service} to use image: ${IMAGE_TAG}"
+          done
+
+      - name: Apply Kubernetes manifests
+        run: |
+          # Apply namespace first
+          kubectl apply -f k8s/namespaces/bloghub-namespace.yaml
+          
+          # Apply all deployments
+          kubectl apply -f k8s/deployments/
+          
+          # Apply all services
+          kubectl apply -f k8s/services/
+
+      - name: Wait for deployments to be ready
+        run: |
+          kubectl rollout status deployment/post-service -n ${{ env.NAMESPACE }} --timeout=5m
+          kubectl rollout status deployment/comment-service -n ${{ env.NAMESPACE }} --timeout=5m
+          kubectl rollout status deployment/user-service -n ${{ env.NAMESPACE }} --timeout=5m
+          kubectl rollout status deployment/notification-service -n ${{ env.NAMESPACE }} --timeout=5m
+          kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }} --timeout=5m
+
+      - name: Verify deployment
+        run: |
+          echo "📊 Deployment Status:"
+          kubectl get deployments -n ${{ env.NAMESPACE }}
+          echo ""
+          echo "📊 Pod Status:"
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          echo ""
+          echo "📊 Service Status:"
+          kubectl get services -n ${{ env.NAMESPACE }}

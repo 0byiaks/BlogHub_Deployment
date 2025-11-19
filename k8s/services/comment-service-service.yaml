@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: comment-service
+  namespace: bloghub
+  labels:
+    app: comment-service
+    tier: backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 3002
+    protocol: TCP
+    name: http
+  selector:
+    app: comment-service
+
