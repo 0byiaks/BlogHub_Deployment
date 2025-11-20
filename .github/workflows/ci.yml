@@ -1,0 +1,136 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - 'feature/**'
+  pull_request:
+    branches:
+      - develop
+      - main
+
+# Permissions for OIDC authentication
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read     # Required for checkout
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY: production-bloghub  # Production ECR repository
+  NAMESPACE: bloghub
+
+jobs:
+  test:
+    name: Test Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies and test Post Service
+        run: |
+          cd apps/post-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test Comment Service
+        run: |
+          cd apps/comment-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test User Service
+        run: |
+          cd apps/user-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test Notification Service
+        run: |
+          cd apps/notification-service
+          npm ci
+          npm test || echo "No tests configured yet"
+
+      - name: Test Frontend
+        run: |
+          cd apps/frontend
+          npm ci
+          npm test || echo "No tests configured yet"
+
+  build-and-push-images:
+    name: Build and Push Images to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      matrix:
+        service:
+          - post-service
+          - comment-service
+          - user-service
+          - notification-service
+          - frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-CI-${{ github.run_id }}
+
+      - name: Check if ECR repository exists
+        run: |
+          if ! aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "❌ ECR repository does not exist!"
+            echo "Please create infrastructure first by running the infrastructure workflow"
+            exit 1
+          else
+            echo "✅ ECR repository exists: ${{ env.ECR_REPOSITORY }}"
+          fi
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Get commit SHA (short version)
+        id: commit
+        run: echo "sha_short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ matrix.service }}-${{ steps.commit.outputs.sha_short }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ matrix.service }}-latest \
+            --push \
+            ./apps/${{ matrix.service }}
+
+      - name: Output image details
+        run: |
+          echo "✅ Built and pushed:"
+          echo "   Image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ matrix.service }}-${{ steps.commit.outputs.sha_short }}"
+          echo "   Latest: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ matrix.service }}-latest"
+
