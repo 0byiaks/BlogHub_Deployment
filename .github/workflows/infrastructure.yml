@@ -90,6 +90,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: determine-environment
     timeout-minutes: 30
+    permissions:
+      id-token: write   # Required for OIDC authentication
+      contents: read     # Required for checkout
     
     steps:
       - name: Checkout code
@@ -108,9 +111,17 @@ jobs:
           echo "📋 Verification Checklist:"
           echo "1. IAM Role exists: dev-github-actions-role"
           echo "2. OIDC Provider ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com"
-          echo "3. Trust policy Principal matches OIDC Provider ARN"
+          echo "3. Trust policy Principal MUST be: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com"
           echo "4. Trust policy condition: repo:${{ github.repository }}:*"
           echo "5. Workflow has id-token: write permission"
+          echo ""
+          echo "🔑 Testing OIDC token availability..."
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "✅ OIDC token environment variables are set"
+          else
+            echo "❌ OIDC token environment variables are NOT set"
+            echo "This might indicate a permissions issue"
+          fi
       
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -118,6 +129,7 @@ jobs:
           role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-${{ github.run_id }}
+          role-duration-seconds: 3600
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -153,6 +165,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [determine-environment, terraform-plan]
     timeout-minutes: 60
+    permissions:
+      id-token: write   # Required for OIDC authentication
+      contents: read     # Required for checkout
     if: |
       (github.ref == 'refs/heads/develop') ||
       (github.ref == 'refs/heads/main' && github.event.inputs.action == 'apply') ||
@@ -216,6 +231,9 @@ jobs:
     needs: determine-environment
     if: github.event.inputs.action == 'destroy'
     timeout-minutes: 60
+    permissions:
+      id-token: write   # Required for OIDC authentication
+      contents: read     # Required for checkout
     environment:
       name: ${{ needs.determine-environment.outputs.environment }}-destroy
       # Add approval requirement in GitHub Settings → Environments
