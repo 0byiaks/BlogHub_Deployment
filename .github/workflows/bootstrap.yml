@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: eu-north-1
+  AWS_REGION: ${{ secrets.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   TERRAFORM_DIR: infra/terraform/bootstrap
   TERRAFORM_VERSION: 1.6.0
