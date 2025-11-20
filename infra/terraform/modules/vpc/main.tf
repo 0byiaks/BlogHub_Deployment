@@ -4,6 +4,24 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+# Calculate subnet CIDRs dynamically if not provided
+locals {
+  # Default to 2 public and 2 private subnets
+  num_public_subnets  = length(var.public_subnet_cidrs) > 0 ? length(var.public_subnet_cidrs) : 2
+  num_private_subnets = length(var.private_subnet_cidrs) > 0 ? length(var.private_subnet_cidrs) : 2
+
+  # Calculate public subnet CIDRs: use provided or calculate from VPC CIDR
+  public_subnet_cidrs = length(var.public_subnet_cidrs) > 0 ? var.public_subnet_cidrs : [
+    for i in range(local.num_public_subnets) : cidrsubnet(var.vpc_cidr, 8, i)
+  ]
+
+  # Calculate private subnet CIDRs: use provided or calculate from VPC CIDR
+  # Start private subnets after public subnets (offset by num_public_subnets)
+  private_subnet_cidrs = length(var.private_subnet_cidrs) > 0 ? var.private_subnet_cidrs : [
+    for i in range(local.num_private_subnets) : cidrsubnet(var.vpc_cidr, 8, local.num_public_subnets + i)
+  ]
+}
+
 # VPC
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
@@ -28,10 +46,10 @@ resource "aws_internet_gateway" "main" {
 
 # Public Subnets
 resource "aws_subnet" "public" {
-  count = length(var.public_subnet_cidrs)
+  count = local.num_public_subnets
 
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.public_subnet_cidrs[count.index]
+  cidr_block              = local.public_subnet_cidrs[count.index]
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
 
@@ -44,10 +62,10 @@ resource "aws_subnet" "public" {
 
 # Private Subnets
 resource "aws_subnet" "private" {
-  count = length(var.private_subnet_cidrs)
+  count = local.num_private_subnets
 
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.private_subnet_cidrs[count.index]
+  cidr_block        = local.private_subnet_cidrs[count.index]
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = merge(var.tags, {
