@@ -28,6 +28,8 @@ env:
   AWS_ACCOUNT_ID: 716769866080
   TERRAFORM_DIR: infra/terraform/bootstrap
   TERRAFORM_VERSION: 1.6.0
+  GITHUB_ORG: 0byiaks
+  GITHUB_REPO: Devops_Deployment
 
 jobs:
   validate-input:
@@ -86,7 +88,11 @@ jobs:
       
       - name: Terraform Plan (Bootstrap)
         working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform plan -out=tfplan
+        run: |
+          terraform plan \
+            -var="github_org=${{ env.GITHUB_ORG }}" \
+            -var="github_repo=${{ env.GITHUB_REPO }}" \
+            -out=tfplan
       
       - name: Terraform Apply (Bootstrap)
         working-directory: ${{ env.TERRAFORM_DIR }}
