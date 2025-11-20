@@ -118,10 +118,20 @@ jobs:
           echo "🔑 Testing OIDC token availability..."
           if [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
             echo "✅ OIDC token environment variables are set"
+            echo "   ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:20}..."
+            echo "   ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
           else
             echo "❌ OIDC token environment variables are NOT set"
-            echo "This might indicate a permissions issue"
+            echo "   ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-NOT SET}"
+            echo "   ACTIONS_ID_TOKEN_REQUEST_URL: ${ACTIONS_ID_TOKEN_REQUEST_URL:-NOT SET}"
+            echo "⚠️ This indicates a permissions issue - check that id-token: write is set"
           fi
+          echo ""
+          echo "🔍 Additional Debug Info:"
+          echo "   GitHub Event: ${{ github.event_name }}"
+          echo "   GitHub Ref: ${{ github.ref }}"
+          echo "   GitHub Actor: ${{ github.actor }}"
+          echo "   Is Fork: ${{ github.event.repository.fork }}"
       
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -130,6 +140,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-${{ github.run_id }}
           role-duration-seconds: 3600
+          audience: sts.amazonaws.com
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
