@@ -183,51 +183,7 @@ jobs:
           echo "📊 Service Status:"
           kubectl get services -n ${{ env.NAMESPACE }}
           echo ""
-          
-      - name: Get Frontend URL
-        id: get-url
-        run: |
-          echo "🔍 Getting frontend LoadBalancer URL..."
-          
-          # Wait for LoadBalancer to be provisioned
-          TIMEOUT=120
-          ELAPSED=0
-          INTERVAL=5
-          
-          while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
-            EXTERNAL_URL=$(kubectl get service frontend -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || kubectl get service frontend -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
-            
-            if [ -n "${EXTERNAL_URL}" ]; then
-              FULL_URL="http://${EXTERNAL_URL}"
-              echo "url=${FULL_URL}" >> $GITHUB_OUTPUT
-              echo "✅ LoadBalancer ready!"
-              echo ""
-              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-              echo "🌐 Frontend URL:"
-              echo "   ${FULL_URL}"
-              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-              break
-            fi
-            
-            echo "   Waiting for LoadBalancer... (${ELAPSED}s elapsed)"
-            sleep ${INTERVAL}
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-          
-          if [ -z "${EXTERNAL_URL}" ]; then
-            echo "⚠️  LoadBalancer not ready yet. Check again in a few minutes:"
-            echo "   kubectl get service frontend -n ${{ env.NAMESPACE }}"
-          fi
-        continue-on-error: true
-      
-      - name: Display Frontend URL
-        if: steps.get-url.outputs.url != ''
-        run: |
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🌐 YOUR FRONTEND IS AVAILABLE AT:"
-          echo "   ${{ steps.get-url.outputs.url }}"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
           echo "✅ Deployment complete!"
+          echo ""
+          echo "💡 To get the frontend URL, check AWS Console → EC2 → Load Balancers"
 
