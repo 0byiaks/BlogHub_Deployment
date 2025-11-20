@@ -311,12 +311,6 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
       
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-      
       - name: Terraform Init
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: |
