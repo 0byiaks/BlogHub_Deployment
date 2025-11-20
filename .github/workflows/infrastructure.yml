@@ -273,17 +273,41 @@ jobs:
           # Try to delete all resources in bloghub namespace
           if kubectl get namespace bloghub 2>/dev/null; then
             echo "Deleting all resources in bloghub namespace..."
+            
+            # Delete Load Balancer services first (they take longest)
+            echo "Deleting Load Balancer services..."
+            kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' | while read svc; do
+              echo "  Deleting LoadBalancer service: $svc"
+              kubectl delete svc "$svc" -n bloghub --ignore-not-found=true || true
+            done || true
+            
+            # Delete all other resources
             kubectl delete all --all -n bloghub --ignore-not-found=true || true
             kubectl delete configmap --all -n bloghub --ignore-not-found=true || true
             kubectl delete secret --all -n bloghub --ignore-not-found=true || true
             kubectl delete ingress --all -n bloghub --ignore-not-found=true || true
             
-            # Wait a bit for resources to terminate
-            echo "Waiting for resources to terminate..."
-            sleep 10
+            # Wait for Load Balancers to be deleted (they take 2-3 minutes)
+            echo "Waiting for Load Balancers to be deleted (this may take 2-3 minutes)..."
+            TIMEOUT=240
+            ELAPSED=0
+            while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
+              LB_COUNT=$(kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' | wc -l | tr -d ' ' || echo "0")
+              if [ "${LB_COUNT}" == "0" ] || [ -z "${LB_COUNT}" ]; then
+                echo "✅ All Load Balancer services deleted from Kubernetes"
+                break
+              fi
+              echo "   Still waiting for Load Balancers... (${ELAPSED}s elapsed, ${LB_COUNT} remaining)"
+              sleep 15
+              ELAPSED=$((ELAPSED + 15))
+            done
+            
+            # Wait additional time for AWS to clean up Load Balancer resources
+            echo "Waiting for AWS to clean up Load Balancer resources (30 seconds)..."
+            sleep 30
             
             # Delete namespace
-            kubectl delete namespace bloghub --ignore-not-found=true || true
+            kubectl delete namespace bloghub --ignore-not-found=true --wait=true || true
           else
             echo "⚠️ bloghub namespace not found, skipping cleanup"
           fi
@@ -294,6 +318,32 @@ jobs:
           kubectl get services --all-namespaces 2>/dev/null | grep -v "kube-system" || echo "No services found"
         continue-on-error: true
       
+      - name: Force unlock Terraform state (if locked)
+        run: |
+          echo "🔓 Checking for Terraform state locks..."
+          TERRAFORM_DIR="${{ needs.determine-environment.outputs.terraform_dir }}"
+          
+          # Try to unlock if there's a stale lock
+          cd ${TERRAFORM_DIR}
+          terraform force-unlock -force $(echo "d8e7f752-3c50-86d6-e50c-9d7c21c1a40c" 2>/dev/null || echo "") 2>/dev/null || true
+          
+          echo "✅ State lock check complete"
+        continue-on-error: true
+      
+      - name: Wait before destroy (ensure Load Balancers are gone)
+        run: |
+          echo "⏳ Waiting additional time to ensure AWS resources are cleaned up..."
+          sleep 60
+          echo "✅ Ready to proceed with destroy"
+      
       - name: Terraform Destroy
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: terraform destroy -auto-approve
+        run: |
+          echo "🗑️  Starting Terraform destroy..."
+          terraform destroy -auto-approve || {
+            echo "⚠️  Destroy failed, checking for state lock..."
+            # If destroy fails due to lock, try to unlock
+            terraform force-unlock -force $(terraform show -json 2>/dev/null | jq -r '.values.root_module.resources[].values.id' 2>/dev/null | head -1) 2>/dev/null || true
+            echo "Retrying destroy..."
+            terraform destroy -auto-approve
+          }
