@@ -95,6 +95,43 @@ resource "aws_iam_policy" "github_actions" {
           "eks:UpdateKubeconfig"
         ]
         Resource = var.eks_cluster_name != "" ? "arn:aws:eks:${var.aws_region}:${var.aws_account_id}:cluster/${var.eks_cluster_name}" : "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::devops-deployment-terraform-state-*",
+          "arn:aws:s3:::devops-deployment-terraform-state-*/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DescribeTable",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem"
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/terraform-state-lock"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:*",
+          "ec2:*",
+          "vpc:*",
+          "eks:*",
+          "ecr:*",
+          "logs:*",
+          "autoscaling:*",
+          "application-autoscaling:*"
+        ]
+        Resource = "*"
       }
     ]
   })

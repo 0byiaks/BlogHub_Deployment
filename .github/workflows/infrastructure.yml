@@ -100,53 +100,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Verify OIDC Configuration
-        run: |
-          echo "🔍 OIDC Configuration Check:"
-          echo "Role ARN: ${{ needs.determine-environment.outputs.role_arn }}"
-          echo "AWS Region: ${{ env.AWS_REGION }}"
-          echo "AWS Account ID: ${{ secrets.AWS_ACCOUNT_ID }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Repository Owner: ${{ github.repository_owner }}"
-          echo "Expected Trust Policy: repo:${{ github.repository }}:*"
-          echo ""
-          echo "📋 Verification Checklist:"
-          echo "1. IAM Role exists: dev-github-actions-role"
-          echo "2. OIDC Provider ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com"
-          echo "3. Trust policy Principal MUST be: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com"
-          echo "4. Trust policy condition: repo:${{ github.repository }}:*"
-          echo "5. Workflow has id-token: write permission"
-          echo ""
-          echo "🔑 Testing OIDC token availability..."
-          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
-            echo "✅ OIDC token environment variables are set"
-            echo "   ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:0:20}..."
-            echo "   ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
-          else
-            echo "❌ OIDC token environment variables are NOT set"
-            echo "   ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-NOT SET}"
-            echo "   ACTIONS_ID_TOKEN_REQUEST_URL: ${ACTIONS_ID_TOKEN_REQUEST_URL:-NOT SET}"
-            echo "⚠️ This indicates a permissions issue - check that id-token: write is set"
-          fi
-          echo ""
-          echo "🔍 Additional Debug Info:"
-          echo "   GitHub Event: ${{ github.event_name }}"
-          echo "   GitHub Ref: ${{ github.ref }}"
-          echo "   GitHub Actor: ${{ github.actor }}"
-          echo "   Is Fork: ${{ github.event.repository.fork }}"
-      
-      - name: Get OIDC Token (for debugging)
-        id: oidc-token
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const token = await core.getIDToken('sts.amazonaws.com');
-            console.log('✅ OIDC token retrieved successfully');
-            console.log('Token length:', token.length);
-            console.log('Token preview:', token.substring(0, 50) + '...');
-            core.setOutput('token', token);
-        continue-on-error: true
-      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -154,8 +107,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-${{ github.run_id }}
           role-duration-seconds: 3600
-          audience: sts.amazonaws.com
-          mask-aws-account-id: false
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
