@@ -34,6 +34,7 @@ Attach this policy to your AWS user (`Devops_deployment`) or the IAM role you're
         "iam:DeleteRole",
         "iam:ListRolePolicies",
         "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole",
         "iam:TagRole",
         "iam:UntagRole"
       ],
@@ -45,6 +46,7 @@ Attach this policy to your AWS user (`Devops_deployment`) or the IAM role you're
       "Action": [
         "iam:CreatePolicy",
         "iam:GetPolicy",
+        "iam:GetPolicyVersion",
         "iam:ListPolicies",
         "iam:ListPolicyVersions",
         "iam:CreatePolicyVersion",
