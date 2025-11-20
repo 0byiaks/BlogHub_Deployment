@@ -2,17 +2,17 @@
 
 output "iam_role_arn" {
   description = "ARN of the IAM role for GitHub Actions"
-  value       = aws_iam_role.github_actions.arn
+  value       = module.iam.iam_role_arn
 }
 
 output "iam_role_name" {
   description = "Name of the IAM role"
-  value       = aws_iam_role.github_actions.name
+  value       = module.iam.iam_role_name
 }
 
 output "oidc_provider_arn" {
   description = "ARN of the OIDC provider"
-  value       = aws_iam_openid_connect_provider.github.arn
+  value       = module.iam.oidc_provider_arn
 }
 
 output "setup_instructions" {
@@ -23,13 +23,13 @@ output "setup_instructions" {
     ============================================
     
     ✅ OIDC Provider Created
-    ✅ IAM Role Created: ${aws_iam_role.github_actions.name}
+    ✅ IAM Role Created: ${module.iam.iam_role_name}
     ✅ Policy Attached
     
     📝 Next Steps:
     
     1. Verify the IAM role ARN matches your workflow configuration:
-       ${aws_iam_role.github_actions.arn}
+       ${module.iam.iam_role_arn}
     
     2. You can now run infrastructure.yml - it will use OIDC authentication
     
@@ -37,7 +37,7 @@ output "setup_instructions" {
        - VPC
        - EKS Cluster
        - ECR Repository
-       - Update IAM role with EKS-specific permissions
+       - (IAM is already created by bootstrap)
     
     ============================================
   EOT

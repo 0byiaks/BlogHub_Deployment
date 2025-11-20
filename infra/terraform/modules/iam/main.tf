@@ -94,7 +94,7 @@ resource "aws_iam_policy" "github_actions" {
         Action = [
           "eks:UpdateKubeconfig"
         ]
-        Resource = "arn:aws:eks:${var.aws_region}:${var.aws_account_id}:cluster/${var.eks_cluster_name}"
+        Resource = var.eks_cluster_name != "" ? "arn:aws:eks:${var.aws_region}:${var.aws_account_id}:cluster/${var.eks_cluster_name}" : "*"
       }
     ]
   })

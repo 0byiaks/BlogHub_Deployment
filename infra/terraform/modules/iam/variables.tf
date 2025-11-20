@@ -17,8 +17,9 @@ variable "aws_account_id" {
 }
 
 variable "eks_cluster_name" {
-  description = "Name of the EKS cluster"
+  description = "Name of the EKS cluster (optional - only needed for EKS-specific permissions)"
   type        = string
+  default     = ""
 }
 
 variable "github_org" {
