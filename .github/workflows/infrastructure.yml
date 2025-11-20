@@ -61,7 +61,6 @@ jobs:
     outputs:
       environment: ${{ steps.set-env.outputs.environment }}
       terraform_dir: ${{ steps.set-env.outputs.terraform_dir }}
-      role_arn: ${{ steps.set-env.outputs.role_arn }}
     steps:
       - name: Set environment based on branch or input
         id: set-env
@@ -78,9 +77,8 @@ jobs:
           
           echo "environment=${ENV}" >> $GITHUB_OUTPUT
           echo "terraform_dir=infra/terraform/environments/${ENV}" >> $GITHUB_OUTPUT
-          echo "role_arn=${ROLE_ARN}" >> $GITHUB_OUTPUT
           
-          echo "✅ Role ARN set: ${ROLE_ARN}"
+          echo "✅ Role ARN will be: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
           
           echo "✅ Deploying to: ${ENV}"
           echo "📁 Terraform directory: infra/terraform/environments/${ENV}"
@@ -217,7 +215,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Setup Terraform
@@ -273,14 +271,14 @@ jobs:
       - name: Verify OIDC Configuration
         run: |
           echo "🔍 OIDC Configuration Check:"
-          echo "Role ARN: ${{ needs.determine-environment.outputs.role_arn }}"
+          echo "Role ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
           echo "AWS Region: ${{ env.AWS_REGION }}"
           echo "Repository: ${{ github.repository }}"
       
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-${{ github.run_id }}
       
