@@ -118,19 +118,6 @@ jobs:
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform init
       
-      - name: Check and force-unlock stale state lock
-        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          echo "🔍 Checking for state lock..."
-          if terraform force-unlock -force $(terraform show -json 2>/dev/null | jq -r '.values.root_module.resources[] | select(.type == "aws_dynamodb_table") | .values.name' 2>/dev/null || echo "") 2>&1 | grep -q "No locks found"; then
-            echo "✅ No locks found"
-          else
-            echo "⚠️ Attempting to force-unlock any stale locks..."
-            # Try to get lock ID from error or force-unlock all
-            terraform force-unlock -force $(terraform show -json 2>/dev/null | jq -r '.values.root_module.resources[] | select(.type == "aws_dynamodb_table") | .values.name' 2>/dev/null || echo "") || true
-          fi
-        continue-on-error: true
-      
       - name: Terraform Format Check
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform fmt -check
@@ -142,22 +129,31 @@ jobs:
       - name: Terraform Plan
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: |
-          # Try plan, if it fails due to lock, force-unlock and retry
-          if ! terraform plan -out=tfplan 2>&1 | tee plan-output.log; then
+          # Try plan, if it fails due to lock, extract lock ID and force-unlock
+          set +e
+          terraform plan -out=tfplan 2>&1 | tee plan-output.log
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          
+          if [ ${PLAN_EXIT_CODE} -ne 0 ]; then
             if grep -q "Error acquiring the state lock" plan-output.log; then
-              echo "⚠️ Plan failed due to lock, attempting to force-unlock..."
-              LOCK_ID=$(grep -oP 'ID:\s+\K[^\s]+' plan-output.log | head -1 || echo "")
-              if [ -n "${LOCK_ID}" ]; then
-                echo "Force-unlocking: ${LOCK_ID}"
-                terraform force-unlock -force "${LOCK_ID}" || true
-                echo "Retrying plan..."
+              echo "⚠️ Plan failed due to state lock, attempting to force-unlock..."
+              # Extract lock ID from error message (format: ID: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c)
+              LOCK_ID=$(grep -A 5 "Lock Info:" plan-output.log | grep "ID:" | sed 's/.*ID:[[:space:]]*\([a-f0-9-]*\).*/\1/' | head -1)
+              
+              if [ -n "${LOCK_ID}" ] && [ "${LOCK_ID}" != "" ]; then
+                echo "🔓 Force-unlocking stale lock: ${LOCK_ID}"
+                echo "yes" | terraform force-unlock "${LOCK_ID}" || true
+                echo "✅ Retrying plan after unlock..."
                 terraform plan -out=tfplan
               else
-                echo "Could not extract lock ID, trying to force-unlock all..."
-                terraform force-unlock -force - || true
-                terraform plan -out=tfplan
+                echo "❌ Could not extract lock ID from error message"
+                echo "Lock error details:"
+                grep -A 10 "Lock Info:" plan-output.log || true
+                exit 1
               fi
             else
+              echo "❌ Plan failed with non-lock error"
               exit 1
             fi
           fi
@@ -220,20 +216,28 @@ jobs:
       - name: Terraform Apply
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: |
-          # Try apply, if it fails due to lock, force-unlock and retry
-          if ! terraform apply -auto-approve tfplan 2>&1 | tee apply-output.log; then
+          # Try apply, if it fails due to lock, extract lock ID and force-unlock
+          set +e
+          terraform apply -auto-approve tfplan 2>&1 | tee apply-output.log
+          APPLY_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          
+          if [ ${APPLY_EXIT_CODE} -ne 0 ]; then
             if grep -q "Error acquiring the state lock" apply-output.log; then
-              echo "⚠️ Apply failed due to lock, attempting to force-unlock..."
-              LOCK_ID=$(grep -oP 'ID:\s+\K[^\s]+' apply-output.log | head -1 || echo "")
-              if [ -n "${LOCK_ID}" ]; then
-                echo "Force-unlocking: ${LOCK_ID}"
-                terraform force-unlock -force "${LOCK_ID}" || true
-                echo "Retrying apply..."
+              echo "⚠️ Apply failed due to state lock, attempting to force-unlock..."
+              LOCK_ID=$(grep -A 5 "Lock Info:" apply-output.log | grep "ID:" | sed 's/.*ID:[[:space:]]*\([a-f0-9-]*\).*/\1/' | head -1)
+              
+              if [ -n "${LOCK_ID}" ] && [ "${LOCK_ID}" != "" ]; then
+                echo "🔓 Force-unlocking stale lock: ${LOCK_ID}"
+                echo "yes" | terraform force-unlock "${LOCK_ID}" || true
+                echo "✅ Retrying apply after unlock..."
                 terraform apply -auto-approve tfplan
               else
+                echo "❌ Could not extract lock ID"
                 exit 1
               fi
             else
+              echo "❌ Apply failed with non-lock error"
               exit 1
             fi
           fi
@@ -343,38 +347,34 @@ jobs:
           kubectl get services --all-namespaces 2>/dev/null | grep -v "kube-system" || echo "No services found"
         continue-on-error: true
       
-      - name: Check and force-unlock stale state lock before destroy
-        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          echo "🔍 Checking for state lock before destroy..."
-          # Try to force-unlock any existing locks
-          terraform force-unlock -force - 2>&1 | head -20 || true
-        continue-on-error: true
-      
       - name: Terraform Destroy
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: |
-          # Try destroy, if it fails due to lock, force-unlock and retry
-          if ! terraform destroy -auto-approve 2>&1 | tee destroy-output.log; then
+          # Try destroy, if it fails due to lock, extract lock ID and force-unlock
+          set +e
+          terraform destroy -auto-approve 2>&1 | tee destroy-output.log
+          DESTROY_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          
+          if [ ${DESTROY_EXIT_CODE} -ne 0 ]; then
             if grep -q "Error acquiring the state lock" destroy-output.log; then
-              echo "⚠️ Destroy failed due to lock, attempting to force-unlock..."
-              LOCK_ID=$(grep -oP 'ID:\s+\K[^\s]+' destroy-output.log | head -1 || echo "")
-              if [ -n "${LOCK_ID}" ]; then
-                echo "Force-unlocking: ${LOCK_ID}"
-                terraform force-unlock -force "${LOCK_ID}" || true
-                echo "Retrying destroy..."
+              echo "⚠️ Destroy failed due to state lock, attempting to force-unlock..."
+              # Extract lock ID from error message (format: ID: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c)
+              LOCK_ID=$(grep -A 5 "Lock Info:" destroy-output.log | grep "ID:" | sed 's/.*ID:[[:space:]]*\([a-f0-9-]*\).*/\1/' | head -1)
+              
+              if [ -n "${LOCK_ID}" ] && [ "${LOCK_ID}" != "" ]; then
+                echo "🔓 Force-unlocking stale lock: ${LOCK_ID}"
+                echo "yes" | terraform force-unlock "${LOCK_ID}" || true
+                echo "✅ Retrying destroy after unlock..."
                 terraform destroy -auto-approve
               else
-                # Try to unlock with the ID from the error message
-                LOCK_ID=$(grep -oP 'ID:\s+\K[^\w-]+' destroy-output.log | tr -d ' ' | head -1 || echo "")
-                if [ -n "${LOCK_ID}" ]; then
-                  terraform force-unlock -force "${LOCK_ID}" || true
-                  terraform destroy -auto-approve
-                else
-                  exit 1
-                fi
+                echo "❌ Could not extract lock ID from error message"
+                echo "Lock error details:"
+                grep -A 10 "Lock Info:" destroy-output.log || true
+                exit 1
               fi
             else
+              echo "❌ Destroy failed with non-lock error"
               exit 1
             fi
           fi
