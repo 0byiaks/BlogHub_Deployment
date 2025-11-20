@@ -14,7 +14,7 @@ variable "project_name" {
 variable "vpc_cidr" {
   description = "CIDR block for VPC"
   type        = string
-  default     = "10.2.0.0/16"  # Different CIDR for production
+  default     = "10.2.0.0/16" # Different CIDR for production
 }
 
 variable "environment" {
