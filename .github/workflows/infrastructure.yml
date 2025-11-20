@@ -74,9 +74,13 @@ jobs:
             ENV="staging"
           fi
           
+          ROLE_ARN="arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
+          
           echo "environment=${ENV}" >> $GITHUB_OUTPUT
           echo "terraform_dir=infra/terraform/environments/${ENV}" >> $GITHUB_OUTPUT
-          echo "role_arn=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role" >> $GITHUB_OUTPUT
+          echo "role_arn=${ROLE_ARN}" >> $GITHUB_OUTPUT
+          
+          echo "✅ Role ARN set: ${ROLE_ARN}"
           
           echo "✅ Deploying to: ${ENV}"
           echo "📁 Terraform directory: infra/terraform/environments/${ENV}"
@@ -149,17 +153,23 @@ jobs:
         run: |
           ROLE_ARN="${{ needs.determine-environment.outputs.role_arn }}"
           echo "🔍 Verifying Role ARN:"
-          echo "Role ARN: $ROLE_ARN"
+          echo "Role ARN from output: ${ROLE_ARN:-EMPTY}"
           echo ""
           echo "Expected format: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
           echo "Account ID from secret: ${{ secrets.AWS_ACCOUNT_ID }}"
           echo "Expected role name: dev-github-actions-role"
           echo ""
-          if [[ "$ROLE_ARN" == "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role" ]]; then
+          EXPECTED_ARN="arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
+          echo "Expected ARN: $EXPECTED_ARN"
+          echo ""
+          if [ -z "$ROLE_ARN" ]; then
+            echo "❌ Role ARN is EMPTY - output not set correctly!"
+            echo "   Using expected ARN: $EXPECTED_ARN"
+          elif [ "$ROLE_ARN" == "$EXPECTED_ARN" ]; then
             echo "✅ Role ARN format is correct"
           else
             echo "❌ Role ARN format mismatch!"
-            echo "   Expected: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
+            echo "   Expected: $EXPECTED_ARN"
             echo "   Got: $ROLE_ARN"
           fi
       
@@ -172,7 +182,6 @@ jobs:
           role-duration-seconds: 3600
           audience: sts.amazonaws.com
           mask-aws-account-id: false
-          debug: true
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
