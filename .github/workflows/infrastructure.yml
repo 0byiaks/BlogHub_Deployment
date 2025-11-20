@@ -80,6 +80,10 @@ jobs:
           
           echo "✅ Deploying to: ${ENV}"
           echo "📁 Terraform directory: infra/terraform/environments/${ENV}"
+          echo "🔐 IAM Role ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
+          echo "📦 Repository: ${{ github.repository }}"
+          echo ""
+          echo "⚠️ OIDC Trust Policy should match: repo:${{ github.repository }}:*"
 
   terraform-plan:
     name: Terraform Plan
@@ -143,6 +147,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
+      - name: Verify OIDC Configuration
+        run: |
+          echo "🔍 OIDC Configuration Check:"
+          echo "Role ARN: ${{ needs.determine-environment.outputs.role_arn }}"
+          echo "Repository: ${{ github.repository }}"
+      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -195,6 +205,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Verify OIDC Configuration
+        run: |
+          echo "🔍 OIDC Configuration Check:"
+          echo "Role ARN: ${{ needs.determine-environment.outputs.role_arn }}"
+          echo "Repository: ${{ github.repository }}"
       
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
