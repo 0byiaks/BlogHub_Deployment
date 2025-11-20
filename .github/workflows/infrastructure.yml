@@ -48,11 +48,6 @@ on:
           - plan
           - apply
           - destroy
-          - unlock
-      lock_id:
-        description: 'Lock ID to unlock (only needed for unlock action)'
-        required: false
-        type: string
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -123,6 +118,19 @@ jobs:
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform init
       
+      - name: Check and force-unlock stale state lock
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
+        run: |
+          echo "🔍 Checking for state lock..."
+          if terraform force-unlock -force $(terraform show -json 2>/dev/null | jq -r '.values.root_module.resources[] | select(.type == "aws_dynamodb_table") | .values.name' 2>/dev/null || echo "") 2>&1 | grep -q "No locks found"; then
+            echo "✅ No locks found"
+          else
+            echo "⚠️ Attempting to force-unlock any stale locks..."
+            # Try to get lock ID from error or force-unlock all
+            terraform force-unlock -force $(terraform show -json 2>/dev/null | jq -r '.values.root_module.resources[] | select(.type == "aws_dynamodb_table") | .values.name' 2>/dev/null || echo "") || true
+          fi
+        continue-on-error: true
+      
       - name: Terraform Format Check
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform fmt -check
@@ -134,13 +142,25 @@ jobs:
       - name: Terraform Plan
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: |
-          # Try plan, if it fails due to lock, wait a bit and retry
-          terraform plan -out=tfplan || {
-            echo "⚠️  Plan failed, checking if it's a lock issue..."
-            sleep 30
-            echo "Retrying plan..."
-            terraform plan -out=tfplan
-          }
+          # Try plan, if it fails due to lock, force-unlock and retry
+          if ! terraform plan -out=tfplan 2>&1 | tee plan-output.log; then
+            if grep -q "Error acquiring the state lock" plan-output.log; then
+              echo "⚠️ Plan failed due to lock, attempting to force-unlock..."
+              LOCK_ID=$(grep -oP 'ID:\s+\K[^\s]+' plan-output.log | head -1 || echo "")
+              if [ -n "${LOCK_ID}" ]; then
+                echo "Force-unlocking: ${LOCK_ID}"
+                terraform force-unlock -force "${LOCK_ID}" || true
+                echo "Retrying plan..."
+                terraform plan -out=tfplan
+              else
+                echo "Could not extract lock ID, trying to force-unlock all..."
+                terraform force-unlock -force - || true
+                terraform plan -out=tfplan
+              fi
+            else
+              exit 1
+            fi
+          fi
       
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
@@ -199,7 +219,24 @@ jobs:
       
       - name: Terraform Apply
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: terraform apply -auto-approve tfplan
+        run: |
+          # Try apply, if it fails due to lock, force-unlock and retry
+          if ! terraform apply -auto-approve tfplan 2>&1 | tee apply-output.log; then
+            if grep -q "Error acquiring the state lock" apply-output.log; then
+              echo "⚠️ Apply failed due to lock, attempting to force-unlock..."
+              LOCK_ID=$(grep -oP 'ID:\s+\K[^\s]+' apply-output.log | head -1 || echo "")
+              if [ -n "${LOCK_ID}" ]; then
+                echo "Force-unlocking: ${LOCK_ID}"
+                terraform force-unlock -force "${LOCK_ID}" || true
+                echo "Retrying apply..."
+                terraform apply -auto-approve tfplan
+              else
+                exit 1
+              fi
+            else
+              exit 1
+            fi
+          fi
       
       - name: Terraform Output
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
@@ -213,73 +250,6 @@ jobs:
           path: ${{ needs.determine-environment.outputs.terraform_dir }}/terraform-outputs.json
           retention-days: 30
         continue-on-error: true
-
-  terraform-unlock:
-    name: Force Unlock Terraform State
-    runs-on: ubuntu-latest
-    needs: determine-environment
-    if: github.event.inputs.action == 'unlock'
-    timeout-minutes: 10
-    permissions:
-      id-token: write
-      contents: read
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-Unlock-${{ github.run_id }}
-      
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-      
-      - name: Terraform Init
-        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: terraform init -lock=false
-        continue-on-error: true
-      
-      - name: List current locks
-        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          echo "🔍 Checking for Terraform state locks..."
-          echo ""
-          echo "To find the lock ID, check the error message from the failed operation."
-          echo "The lock ID is usually shown in the error output."
-          echo ""
-          echo "Example lock ID format: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c"
-        continue-on-error: true
-      
-      - name: Force unlock state
-        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          LOCK_ID="${{ github.event.inputs.lock_id }}"
-          
-          if [ -z "${LOCK_ID}" ]; then
-            echo "❌ Lock ID not provided!"
-            echo ""
-            echo "Please provide the lock ID from the error message."
-            echo "Example: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c"
-            echo ""
-            echo "You can also unlock via AWS Console:"
-            echo "1. Go to DynamoDB → devops-deployment-terraform-lock"
-            echo "2. Find item with LockID matching your state file path"
-            echo "3. Delete that item"
-            exit 1
-          fi
-          
-          echo "🔓 Force unlocking state with Lock ID: ${LOCK_ID}"
-          terraform force-unlock -force ${LOCK_ID}
-          echo "✅ State unlocked successfully!"
-          echo ""
-          echo "You can now retry your Terraform operation."
 
   terraform-destroy:
     name: Terraform Destroy
@@ -311,15 +281,15 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
       
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      
       - name: Terraform Init
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          # Try init, if locked wait and retry
-          terraform init || {
-            echo "⚠️  Init failed, may be due to state lock. Waiting 30 seconds..."
-            sleep 30
-            terraform init
-          }
+        run: terraform init
       
       - name: Get EKS cluster name
         id: get-cluster
@@ -352,41 +322,17 @@ jobs:
           # Try to delete all resources in bloghub namespace
           if kubectl get namespace bloghub 2>/dev/null; then
             echo "Deleting all resources in bloghub namespace..."
-            
-            # Delete Load Balancer services first (they take longest)
-            echo "Deleting Load Balancer services..."
-            kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' | while read svc; do
-              echo "  Deleting LoadBalancer service: $svc"
-              kubectl delete svc "$svc" -n bloghub --ignore-not-found=true || true
-            done || true
-            
-            # Delete all other resources
             kubectl delete all --all -n bloghub --ignore-not-found=true || true
             kubectl delete configmap --all -n bloghub --ignore-not-found=true || true
             kubectl delete secret --all -n bloghub --ignore-not-found=true || true
             kubectl delete ingress --all -n bloghub --ignore-not-found=true || true
             
-            # Wait for Load Balancers to be deleted (they take 2-3 minutes)
-            echo "Waiting for Load Balancers to be deleted (this may take 2-3 minutes)..."
-            TIMEOUT=240
-            ELAPSED=0
-            while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
-              LB_COUNT=$(kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' | wc -l | tr -d ' ' || echo "0")
-              if [ "${LB_COUNT}" == "0" ] || [ -z "${LB_COUNT}" ]; then
-                echo "✅ All Load Balancer services deleted from Kubernetes"
-                break
-              fi
-              echo "   Still waiting for Load Balancers... (${ELAPSED}s elapsed, ${LB_COUNT} remaining)"
-              sleep 15
-              ELAPSED=$((ELAPSED + 15))
-            done
-            
-            # Wait additional time for AWS to clean up Load Balancer resources
-            echo "Waiting for AWS to clean up Load Balancer resources (30 seconds)..."
-            sleep 30
+            # Wait a bit for resources to terminate
+            echo "Waiting for resources to terminate..."
+            sleep 10
             
             # Delete namespace
-            kubectl delete namespace bloghub --ignore-not-found=true --wait=true || true
+            kubectl delete namespace bloghub --ignore-not-found=true || true
           else
             echo "⚠️ bloghub namespace not found, skipping cleanup"
           fi
@@ -397,32 +343,38 @@ jobs:
           kubectl get services --all-namespaces 2>/dev/null | grep -v "kube-system" || echo "No services found"
         continue-on-error: true
       
-      - name: Force unlock Terraform state (if locked)
+      - name: Check and force-unlock stale state lock before destroy
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: |
-          echo "🔓 Checking for Terraform state locks..."
-          TERRAFORM_DIR="${{ needs.determine-environment.outputs.terraform_dir }}"
-          
-          # Try to unlock if there's a stale lock
-          cd ${TERRAFORM_DIR}
-          terraform force-unlock -force $(echo "d8e7f752-3c50-86d6-e50c-9d7c21c1a40c" 2>/dev/null || echo "") 2>/dev/null || true
-          
-          echo "✅ State lock check complete"
+          echo "🔍 Checking for state lock before destroy..."
+          # Try to force-unlock any existing locks
+          terraform force-unlock -force - 2>&1 | head -20 || true
         continue-on-error: true
-      
-      - name: Wait before destroy (ensure Load Balancers are gone)
-        run: |
-          echo "⏳ Waiting additional time to ensure AWS resources are cleaned up..."
-          sleep 60
-          echo "✅ Ready to proceed with destroy"
       
       - name: Terraform Destroy
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: |
-          echo "🗑️  Starting Terraform destroy..."
-          terraform destroy -auto-approve || {
-            echo "⚠️  Destroy failed, checking for state lock..."
-            # If destroy fails due to lock, try to unlock
-            terraform force-unlock -force $(terraform show -json 2>/dev/null | jq -r '.values.root_module.resources[].values.id' 2>/dev/null | head -1) 2>/dev/null || true
-            echo "Retrying destroy..."
-            terraform destroy -auto-approve
-          }
+          # Try destroy, if it fails due to lock, force-unlock and retry
+          if ! terraform destroy -auto-approve 2>&1 | tee destroy-output.log; then
+            if grep -q "Error acquiring the state lock" destroy-output.log; then
+              echo "⚠️ Destroy failed due to lock, attempting to force-unlock..."
+              LOCK_ID=$(grep -oP 'ID:\s+\K[^\s]+' destroy-output.log | head -1 || echo "")
+              if [ -n "${LOCK_ID}" ]; then
+                echo "Force-unlocking: ${LOCK_ID}"
+                terraform force-unlock -force "${LOCK_ID}" || true
+                echo "Retrying destroy..."
+                terraform destroy -auto-approve
+              else
+                # Try to unlock with the ID from the error message
+                LOCK_ID=$(grep -oP 'ID:\s+\K[^\w-]+' destroy-output.log | tr -d ' ' | head -1 || echo "")
+                if [ -n "${LOCK_ID}" ]; then
+                  terraform force-unlock -force "${LOCK_ID}" || true
+                  terraform destroy -auto-approve
+                else
+                  exit 1
+                fi
+              fi
+            else
+              exit 1
+            fi
+          fi
