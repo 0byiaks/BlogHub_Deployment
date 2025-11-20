@@ -95,11 +95,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
+      - name: Verify OIDC Configuration
+        run: |
+          echo "🔍 OIDC Configuration Check:"
+          echo "Role ARN: ${{ needs.determine-environment.outputs.role_arn }}"
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "AWS Account ID: ${{ secrets.AWS_ACCOUNT_ID }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository Owner: ${{ github.repository_owner }}"
+          echo "Expected Trust Policy: repo:${{ github.repository }}:*"
+          echo ""
+          echo "📋 Verification Checklist:"
+          echo "1. IAM Role exists: dev-github-actions-role"
+          echo "2. OIDC Provider ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com"
+          echo "3. Trust policy Principal matches OIDC Provider ARN"
+          echo "4. Trust policy condition: repo:${{ github.repository }}:*"
+          echo "5. Workflow has id-token: write permission"
+      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
