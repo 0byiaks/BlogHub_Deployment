@@ -219,13 +219,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Verify OIDC Configuration
-        run: |
-          echo "🔍 OIDC Configuration Check:"
-          echo "Role ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
-          echo "AWS Region: ${{ env.AWS_REGION }}"
-          echo "Repository: ${{ github.repository }}"
-      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
