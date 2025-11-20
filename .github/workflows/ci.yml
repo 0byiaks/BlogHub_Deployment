@@ -40,25 +40,6 @@ jobs:
           echo "ecr_repository=${ECR_REPO}" >> $GITHUB_OUTPUT
           echo "✅ Using ECR repository: ${ECR_REPO}"
 
-jobs:
-  determine-ecr-repository:
-    name: Determine ECR Repository
-    runs-on: ubuntu-latest
-    outputs:
-      ecr_repository: ${{ steps.set-repo.outputs.ecr_repository }}
-    steps:
-      - name: Set ECR repository based on branch
-        id: set-repo
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            ECR_REPO="production-bloghub"
-          else
-            # For develop and other branches, use staging
-            ECR_REPO="staging-bloghub"
-          fi
-          echo "ecr_repository=${ECR_REPO}" >> $GITHUB_OUTPUT
-          echo "✅ Using ECR repository: ${ECR_REPO}"
-
   test:
     name: Test Code Quality
     runs-on: ubuntu-latest
