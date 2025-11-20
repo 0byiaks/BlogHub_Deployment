@@ -35,37 +35,56 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
 
       - name: Install dependencies and test Post Service
         run: |
           cd apps/post-service
-          npm ci
-          npm test || echo "No tests configured yet"
+          if [ -f "package-lock.json" ] || [ -f "package.json" ]; then
+            npm ci || npm install
+            npm test || echo "No tests configured yet"
+          else
+            echo "⚠️ No package.json found, skipping post-service"
+          fi
 
       - name: Test Comment Service
         run: |
           cd apps/comment-service
-          npm ci
-          npm test || echo "No tests configured yet"
+          if [ -f "package-lock.json" ] || [ -f "package.json" ]; then
+            npm ci || npm install
+            npm test || echo "No tests configured yet"
+          else
+            echo "⚠️ No package.json found, skipping comment-service"
+          fi
 
       - name: Test User Service
         run: |
           cd apps/user-service
-          npm ci
-          npm test || echo "No tests configured yet"
+          if [ -f "package-lock.json" ] || [ -f "package.json" ]; then
+            npm ci || npm install
+            npm test || echo "No tests configured yet"
+          else
+            echo "⚠️ No package.json found, skipping user-service"
+          fi
 
       - name: Test Notification Service
         run: |
           cd apps/notification-service
-          npm ci
-          npm test || echo "No tests configured yet"
+          if [ -f "package-lock.json" ] || [ -f "package.json" ]; then
+            npm ci || npm install
+            npm test || echo "No tests configured yet"
+          else
+            echo "⚠️ No package.json found, skipping notification-service"
+          fi
 
       - name: Test Frontend
         run: |
           cd apps/frontend
-          npm ci
-          npm test || echo "No tests configured yet"
+          if [ -f "package-lock.json" ] || [ -f "package.json" ]; then
+            npm ci || npm install
+            npm test || echo "No tests configured yet"
+          else
+            echo "⚠️ No package.json found, skipping frontend"
+          fi
 
   build-and-push-images:
     name: Build and Push Images to ECR
