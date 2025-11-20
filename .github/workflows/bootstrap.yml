@@ -1,8 +1,16 @@
 name: Bootstrap Infrastructure (One-Time Setup)
 
 # This workflow is for ONE-TIME initial setup
-# It creates the OIDC provider and IAM role using AWS access keys
-# After this runs successfully, you can use infrastructure.yml with OIDC
+# It creates ONLY the OIDC provider and IAM role using AWS access keys
+# After this runs successfully, infrastructure.yml can use OIDC authentication
+# 
+# What this creates:
+# - OIDC Provider for GitHub Actions
+# - IAM Role for GitHub Actions
+# - Basic IAM Policy with infrastructure creation permissions
+#
+# What this does NOT create:
+# - VPC, EKS, ECR (those are created by infrastructure.yml)
 
 on:
   workflow_dispatch:  # Manual trigger only - for security
@@ -18,7 +26,7 @@ permissions:
 env:
   AWS_REGION: eu-north-1
   AWS_ACCOUNT_ID: 716769866080
-  TERRAFORM_DIR: infra/terraform/environments/dev
+  TERRAFORM_DIR: infra/terraform/bootstrap
   TERRAFORM_VERSION: 1.6.0
 
 jobs:

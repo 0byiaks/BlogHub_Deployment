@@ -68,19 +68,24 @@ module "ecr" {
 }
 
 # IAM Module for GitHub Actions (OIDC)
-module "iam" {
-  source = "../../modules/iam"
-  
-  environment      = var.environment
-  aws_region       = var.aws_region
-  aws_account_id   = var.aws_account_id
-  eks_cluster_name = module.eks.cluster_name
-  github_org        = var.github_org
-  github_repo       = var.github_repo
-  
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
-}
+# NOTE: IAM/OIDC is managed by bootstrap workflow
+# Bootstrap creates: OIDC provider, IAM role, and basic policy
+# This module is commented out to avoid conflicts
+# If you need to update IAM permissions, do it in bootstrap or manually
+
+# module "iam" {
+#   source = "../../modules/iam"
+#   
+#   environment      = var.environment
+#   aws_region       = var.aws_region
+#   aws_account_id   = var.aws_account_id
+#   eks_cluster_name = module.eks.cluster_name
+#   github_org        = var.github_org
+#   github_repo       = var.github_repo
+#   
+#   tags = {
+#     Environment = var.environment
+#     Project     = var.project_name
+#   }
+# }
 
