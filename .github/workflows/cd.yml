@@ -185,3 +185,54 @@ jobs:
           echo ""
           echo "✅ Deployment complete!"
 
+      - name: Get Frontend URL
+        id: frontend-url
+        run: |
+          echo "🔍 Getting frontend LoadBalancer URL..."
+          
+          # Wait for LoadBalancer to be provisioned (max 5 minutes)
+          TIMEOUT=300
+          ELAPSED=0
+          INTERVAL=10
+          
+          while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
+            EXTERNAL_URL=$(kubectl get service frontend -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || kubectl get service frontend -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            
+            if [ -n "${EXTERNAL_URL}" ]; then
+              break
+            fi
+            
+            echo "   Waiting for LoadBalancer... (${ELAPSED}s elapsed)"
+            sleep ${INTERVAL}
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          
+          if [ -z "${EXTERNAL_URL}" ]; then
+            echo "⚠️ LoadBalancer not ready yet. Check service status:"
+            kubectl get service frontend -n ${{ env.NAMESPACE }}
+            echo "frontend_url=Not available yet" >> $GITHUB_OUTPUT
+          else
+            FRONTEND_URL="http://${EXTERNAL_URL}"
+            echo "frontend_url=${FRONTEND_URL}" >> $GITHUB_OUTPUT
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🌐 Frontend URL:"
+            echo "   ${FRONTEND_URL}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          fi
+        continue-on-error: true
+
+      - name: Display Frontend URL
+        if: steps.frontend-url.outputs.frontend_url != ''
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🎉 DEPLOYMENT SUCCESSFUL!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "🌐 Access your application at:"
+          echo "   ${{ steps.frontend-url.outputs.frontend_url }}"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
