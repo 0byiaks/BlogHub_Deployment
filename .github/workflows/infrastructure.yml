@@ -133,6 +133,18 @@ jobs:
           echo "   GitHub Actor: ${{ github.actor }}"
           echo "   Is Fork: ${{ github.event.repository.fork }}"
       
+      - name: Get OIDC Token (for debugging)
+        id: oidc-token
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            console.log('✅ OIDC token retrieved successfully');
+            console.log('Token length:', token.length);
+            console.log('Token preview:', token.substring(0, 50) + '...');
+            core.setOutput('token', token);
+        continue-on-error: true
+      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -141,6 +153,7 @@ jobs:
           role-session-name: GitHubActions-${{ github.run_id }}
           role-duration-seconds: 3600
           audience: sts.amazonaws.com
+          mask-aws-account-id: false
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
