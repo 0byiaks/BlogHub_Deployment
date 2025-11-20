@@ -37,7 +37,7 @@ provider "aws" {
 # IAM Module for GitHub Actions (OIDC)
 # Using the reusable IAM module - EKS cluster name is optional during bootstrap
 module "iam" {
-  source = "../../modules/iam"
+  source = "../modules/iam"
   
   environment      = var.environment
   aws_region       = var.aws_region
