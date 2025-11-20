@@ -1,31 +1,44 @@
 name: Infrastructure Deployment
 
+# Concurrency control - prevents multiple runs
+concurrency:
+  group: infrastructure-${{ github.ref }}
+  cancel-in-progress: true
+
 # Permissions for OIDC authentication
 permissions:
   id-token: write   # Required for OIDC authentication
   contents: read    # Required for checkout
 
 on:
-  # Trigger on push to develop or main branches (infrastructure changes)
+  # Trigger on push to develop (staging) or main (production) branches
   push:
     branches:
-      - develop  # Auto-apply for testing
-      - main     # Plan only (requires manual approval for apply)
+      - develop  # → staging environment
+      - main     # → production environment
     paths:
       - 'infra/terraform/**'
       - '.github/workflows/infrastructure.yml'
   
-  # Trigger on pull requests to main (plan only - for review)
+  # Trigger on pull requests for review
   pull_request:
     branches:
+      - develop
       - main
     paths:
       - 'infra/terraform/**'
       - '.github/workflows/infrastructure.yml'
   
-  # Allow manual trigger
+  # Allow manual trigger with environment selection
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
       action:
         description: 'Terraform action to perform'
         required: true
@@ -37,47 +50,52 @@ on:
           - destroy
 
 env:
-  AWS_REGION: eu-north-1
-  AWS_ACCOUNT_ID: 716769866080
-  AWS_ROLE_ARN: arn:aws:iam::716769866080:role/dev-github-actions-role
-  TERRAFORM_DIR: infra/terraform/environments/dev
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   TERRAFORM_VERSION: 1.6.0
 
 jobs:
+  determine-environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      terraform_dir: ${{ steps.set-env.outputs.terraform_dir }}
+      role_arn: ${{ steps.set-env.outputs.role_arn }}
+    steps:
+      - name: Set environment based on branch or input
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            ENV="production"
+          else
+            ENV="staging"
+          fi
+          
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+          echo "terraform_dir=infra/terraform/environments/${ENV}" >> $GITHUB_OUTPUT
+          echo "role_arn=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role" >> $GITHUB_OUTPUT
+          
+          echo "✅ Deploying to: ${ENV}"
+          echo "📁 Terraform directory: infra/terraform/environments/${ENV}"
+
   terraform-plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-    # Run plan on all pushes and PRs (needed before apply)
+    needs: determine-environment
+    timeout-minutes: 30
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Try OIDC Authentication
-        id: oidc-auth
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-        continue-on-error: true
-      
-      - name: Fallback to Access Keys (if OIDC not available)
-        if: steps.oidc-auth.outcome == 'failure'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Verify AWS Authentication
-        run: |
-          aws sts get-caller-identity
-          if [ "${{ steps.oidc-auth.outcome }}" == "success" ]; then
-            echo "✅ Using OIDC authentication"
-          else
-            echo "⚠️ Using access key authentication (fallback mode)"
-            echo "💡 Run bootstrap.yml to set up OIDC for future runs"
-          fi
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -86,65 +104,50 @@ jobs:
           terraform_wrapper: false
       
       - name: Terraform Init
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform init
       
       - name: Terraform Format Check
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform fmt -check
       
       - name: Terraform Validate
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform validate
       
       - name: Terraform Plan
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform plan -out=tfplan
       
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
-          path: ${{ env.TERRAFORM_DIR }}/tfplan
+          name: terraform-plan-${{ needs.determine-environment.outputs.environment }}
+          path: ${{ needs.determine-environment.outputs.terraform_dir }}/tfplan
           retention-days: 5
 
   terraform-apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
-    needs: terraform-plan
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event.inputs.action == 'apply'
+    needs: [determine-environment, terraform-plan]
+    timeout-minutes: 60
+    if: |
+      (github.ref == 'refs/heads/develop') ||
+      (github.ref == 'refs/heads/main' && github.event.inputs.action == 'apply') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
     environment:
-      name: dev
-      # Auto-apply for develop branch (testing)
+      name: ${{ needs.determine-environment.outputs.environment }}
+      # Production requires manual approval (configure in GitHub Settings → Environments)
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Try OIDC Authentication
-        id: oidc-auth
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-        continue-on-error: true
-      
-      - name: Fallback to Access Keys (if OIDC not available)
-        if: steps.oidc-auth.outcome == 'failure'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Verify AWS Authentication
-        run: |
-          aws sts get-caller-identity
-          if [ "${{ steps.oidc-auth.outcome }}" == "success" ]; then
-            echo "✅ Using OIDC authentication"
-          else
-            echo "⚠️ Using access key authentication (fallback mode)"
-          fi
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -153,69 +156,51 @@ jobs:
           terraform_wrapper: false
       
       - name: Terraform Init
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform init
       
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
         with:
-          name: terraform-plan
-          path: ${{ env.TERRAFORM_DIR }}
+          name: terraform-plan-${{ needs.determine-environment.outputs.environment }}
+          path: ${{ needs.determine-environment.outputs.terraform_dir }}
       
       - name: Terraform Apply
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform apply -auto-approve tfplan
       
       - name: Terraform Output
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform output -json > terraform-outputs.json
         continue-on-error: true
       
       - name: Upload Terraform Outputs
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-outputs
-          path: ${{ env.TERRAFORM_DIR }}/terraform-outputs.json
+          name: terraform-outputs-${{ needs.determine-environment.outputs.environment }}
+          path: ${{ needs.determine-environment.outputs.terraform_dir }}/terraform-outputs.json
           retention-days: 30
         continue-on-error: true
 
   terraform-destroy:
     name: Terraform Destroy
     runs-on: ubuntu-latest
+    needs: determine-environment
     if: github.event.inputs.action == 'destroy'
+    timeout-minutes: 60
     environment:
-      name: dev-destroy
-      # Add approval requirement for destroy
-      # url: https://github.com/${{ github.repository }}
+      name: ${{ needs.determine-environment.outputs.environment }}-destroy
+      # Add approval requirement in GitHub Settings → Environments
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Try OIDC Authentication
-        id: oidc-auth
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-        continue-on-error: true
-      
-      - name: Fallback to Access Keys (if OIDC not available)
-        if: steps.oidc-auth.outcome == 'failure'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Verify AWS Authentication
-        run: |
-          aws sts get-caller-identity
-          if [ "${{ steps.oidc-auth.outcome }}" == "success" ]; then
-            echo "✅ Using OIDC authentication"
-          else
-            echo "⚠️ Using access key authentication (fallback mode)"
-          fi
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -224,10 +209,9 @@ jobs:
           terraform_wrapper: false
       
       - name: Terraform Init
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform init
       
       - name: Terraform Destroy
-        working-directory: ${{ env.TERRAFORM_DIR }}
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform destroy -auto-approve
-
