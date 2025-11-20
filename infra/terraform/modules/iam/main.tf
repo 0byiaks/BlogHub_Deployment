@@ -99,13 +99,20 @@ resource "aws_iam_policy" "github_actions" {
       {
         Effect = "Allow"
         Action = [
-          "s3:ListBucket",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::devops-deployment-terraform-state-*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "s3:GetObject",
           "s3:PutObject",
           "s3:DeleteObject"
         ]
         Resource = [
-          "arn:aws:s3:::devops-deployment-terraform-state-*",
           "arn:aws:s3:::devops-deployment-terraform-state-*/*"
         ]
       },
@@ -117,7 +124,7 @@ resource "aws_iam_policy" "github_actions" {
           "dynamodb:PutItem",
           "dynamodb:DeleteItem"
         ]
-        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/terraform-state-lock"
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/devops-deployment-terraform-lock"
       },
       {
         Effect = "Allow"
