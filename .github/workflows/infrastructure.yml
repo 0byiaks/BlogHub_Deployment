@@ -53,11 +53,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Configure AWS credentials
+      - name: Try OIDC Authentication
+        id: oidc-auth
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+        continue-on-error: true
+      
+      - name: Fallback to Access Keys (if OIDC not available)
+        if: steps.oidc-auth.outcome == 'failure'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Verify AWS Authentication
+        run: |
+          aws sts get-caller-identity
+          if [ "${{ steps.oidc-auth.outcome }}" == "success" ]; then
+            echo "✅ Using OIDC authentication"
+          else
+            echo "⚠️ Using access key authentication (fallback mode)"
+            echo "💡 Run bootstrap.yml to set up OIDC for future runs"
+          fi
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -101,11 +121,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Configure AWS credentials
+      - name: Try OIDC Authentication
+        id: oidc-auth
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+        continue-on-error: true
+      
+      - name: Fallback to Access Keys (if OIDC not available)
+        if: steps.oidc-auth.outcome == 'failure'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Verify AWS Authentication
+        run: |
+          aws sts get-caller-identity
+          if [ "${{ steps.oidc-auth.outcome }}" == "success" ]; then
+            echo "✅ Using OIDC authentication"
+          else
+            echo "⚠️ Using access key authentication (fallback mode)"
+          fi
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -153,11 +192,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Configure AWS credentials
+      - name: Try OIDC Authentication
+        id: oidc-auth
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+        continue-on-error: true
+      
+      - name: Fallback to Access Keys (if OIDC not available)
+        if: steps.oidc-auth.outcome == 'failure'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Verify AWS Authentication
+        run: |
+          aws sts get-caller-identity
+          if [ "${{ steps.oidc-auth.outcome }}" == "success" ]; then
+            echo "✅ Using OIDC authentication"
+          else
+            echo "⚠️ Using access key authentication (fallback mode)"
+          fi
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

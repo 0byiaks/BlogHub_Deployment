@@ -1,0 +1,113 @@
+name: Bootstrap Infrastructure (One-Time Setup)
+
+# This workflow is for ONE-TIME initial setup
+# It creates the OIDC provider and IAM role using AWS access keys
+# After this runs successfully, you can use infrastructure.yml with OIDC
+
+on:
+  workflow_dispatch:  # Manual trigger only - for security
+    inputs:
+      confirm:
+        description: 'Type "bootstrap" to confirm bootstrap setup'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-north-1
+  AWS_ACCOUNT_ID: 716769866080
+  TERRAFORM_DIR: infra/terraform/environments/dev
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  validate-input:
+    name: Validate Confirmation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "bootstrap" ]; then
+            echo "❌ Invalid confirmation. Please type 'bootstrap' to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+
+  bootstrap:
+    name: Bootstrap OIDC Provider and IAM Role
+    runs-on: ubuntu-latest
+    needs: validate-input
+    environment:
+      name: bootstrap
+      # Add protection rule in GitHub: require manual approval
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials (Access Keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Verify AWS credentials
+        run: |
+          aws sts get-caller-identity
+          echo "✅ AWS credentials verified"
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      
+      - name: Terraform Init
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: terraform init
+      
+      - name: Terraform Format Check
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: terraform fmt -check
+      
+      - name: Terraform Validate
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: terraform validate
+      
+      - name: Terraform Plan (Bootstrap)
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: terraform plan -out=tfplan
+      
+      - name: Terraform Apply (Bootstrap)
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: terraform apply -auto-approve tfplan
+      
+      - name: Get OIDC Role ARN
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: |
+          echo "✅ Bootstrap complete!"
+          echo "📝 OIDC Provider and IAM Role created"
+          terraform output -json | jq -r '.iam_role_arn.value // empty' > oidc_role_arn.txt
+          echo "Role ARN:"
+          cat oidc_role_arn.txt
+      
+      - name: Upload Role ARN
+        uses: actions/upload-artifact@v4
+        with:
+          name: oidc-role-arn
+          path: ${{ env.TERRAFORM_DIR }}/oidc_role_arn.txt
+          retention-days: 30
+      
+      - name: Bootstrap Complete
+        run: |
+          echo "🎉 Bootstrap successful!"
+          echo "✅ OIDC Provider created"
+          echo "✅ IAM Role created"
+          echo ""
+          echo "📝 Next steps:"
+          echo "1. Verify the IAM role ARN matches your workflow configuration"
+          echo "2. You can now use infrastructure.yml with OIDC authentication"
+          echo "3. Consider rotating or removing AWS_ACCESS_KEY_ID secret after verification"
+
