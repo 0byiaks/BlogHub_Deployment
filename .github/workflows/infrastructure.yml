@@ -232,9 +232,67 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
       
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      
       - name: Terraform Init
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform init
+      
+      - name: Get EKS cluster name
+        id: get-cluster
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
+        run: |
+          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "devops-deployment-${{ needs.determine-environment.outputs.environment }}")
+          echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
+          echo "EKS Cluster: ${CLUSTER_NAME}"
+        continue-on-error: true
+      
+      - name: Install kubectl
+        if: steps.get-cluster.outcome == 'success'
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+      
+      - name: Configure kubectl for EKS
+        if: steps.get-cluster.outcome == 'success'
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ steps.get-cluster.outputs.cluster_name }} \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: Delete Kubernetes resources (if cluster exists)
+        if: steps.get-cluster.outcome == 'success'
+        run: |
+          echo "🧹 Cleaning up Kubernetes resources before infrastructure destruction..."
+          
+          # Try to delete all resources in bloghub namespace
+          if kubectl get namespace bloghub 2>/dev/null; then
+            echo "Deleting all resources in bloghub namespace..."
+            kubectl delete all --all -n bloghub --ignore-not-found=true || true
+            kubectl delete configmap --all -n bloghub --ignore-not-found=true || true
+            kubectl delete secret --all -n bloghub --ignore-not-found=true || true
+            kubectl delete ingress --all -n bloghub --ignore-not-found=true || true
+            
+            # Wait a bit for resources to terminate
+            echo "Waiting for resources to terminate..."
+            sleep 10
+            
+            # Delete namespace
+            kubectl delete namespace bloghub --ignore-not-found=true || true
+          else
+            echo "⚠️ bloghub namespace not found, skipping cleanup"
+          fi
+          
+          # Also try to delete any remaining resources cluster-wide
+          echo "Checking for any remaining workloads..."
+          kubectl get deployments --all-namespaces 2>/dev/null | grep -v "kube-system" || echo "No deployments found"
+          kubectl get services --all-namespaces 2>/dev/null | grep -v "kube-system" || echo "No services found"
+        continue-on-error: true
       
       - name: Terraform Destroy
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
