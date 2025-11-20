@@ -10,7 +10,7 @@ terraform {
       version = "~> 5.0"
     }
   }
-  
+
   # Use local backend for bootstrap (or separate S3 key)
   backend "s3" {
     bucket         = "devops-deployment-terraform-state-eu-north-1"
@@ -23,7 +23,7 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
-  
+
   default_tags {
     tags = {
       Project     = var.project_name
@@ -38,14 +38,14 @@ provider "aws" {
 # Using the reusable IAM module - EKS cluster name is optional during bootstrap
 module "iam" {
   source = "../modules/iam"
-  
+
   environment      = var.environment
   aws_region       = var.aws_region
   aws_account_id   = var.aws_account_id
-  eks_cluster_name = ""  # Empty during bootstrap - EKS doesn't exist yet
+  eks_cluster_name = "" # Empty during bootstrap - EKS doesn't exist yet
   github_org       = var.github_org
   github_repo      = var.github_repo
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name

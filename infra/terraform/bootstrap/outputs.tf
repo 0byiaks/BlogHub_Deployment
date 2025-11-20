@@ -17,7 +17,7 @@ output "oidc_provider_arn" {
 
 output "setup_instructions" {
   description = "Instructions for next steps"
-  value = <<-EOT
+  value       = <<-EOT
     ============================================
     Bootstrap Complete! 🎉
     ============================================
