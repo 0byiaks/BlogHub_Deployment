@@ -25,11 +25,9 @@ permissions:
 
 env:
   AWS_REGION: eu-north-1
-  AWS_ACCOUNT_ID: 716769866080
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   TERRAFORM_DIR: infra/terraform/bootstrap
   TERRAFORM_VERSION: 1.6.0
-  GITHUB_ORG: 0byiaks
-  GITHUB_REPO: Devops_Deployment
 
 jobs:
   validate-input:
@@ -90,8 +88,8 @@ jobs:
         working-directory: ${{ env.TERRAFORM_DIR }}
         run: |
           terraform plan \
-            -var="github_org=${{ env.GITHUB_ORG }}" \
-            -var="github_repo=${{ env.GITHUB_REPO }}" \
+            -var="github_org=${{ github.repository_owner }}" \
+            -var="github_repo=${{ github.event.repository.name }}" \
             -out=tfplan
       
       - name: Terraform Apply (Bootstrap)
