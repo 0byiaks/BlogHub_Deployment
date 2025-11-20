@@ -9,13 +9,13 @@ terraform {
       version = "~> 5.0"
     }
   }
-  
+
   # Backend configuration is in backend.tf
 }
 
 provider "aws" {
   region = var.aws_region
-  
+
   default_tags {
     tags = {
       Project     = var.project_name
@@ -28,10 +28,10 @@ provider "aws" {
 # VPC Module
 module "vpc" {
   source = "../../modules/vpc"
-  
+
   environment = var.environment
   vpc_cidr    = var.vpc_cidr
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -41,13 +41,13 @@ module "vpc" {
 # EKS Module
 module "eks" {
   source = "../../modules/eks"
-  
+
   cluster_name    = "${var.project_name}-${var.environment}"
   cluster_version = var.cluster_version
   vpc_id          = module.vpc.vpc_id
-  subnet_ids      = module.vpc.private_subnet_ids  # Using private subnets with NAT Gateway
+  subnet_ids      = module.vpc.private_subnet_ids # Using private subnets with NAT Gateway
   vpc_cidr        = var.vpc_cidr
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -57,10 +57,10 @@ module "eks" {
 # ECR Module
 module "ecr" {
   source = "../../modules/ecr"
-  
+
   environment     = var.environment
   repository_name = var.repository_name
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
