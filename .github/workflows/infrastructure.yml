@@ -145,6 +145,24 @@ jobs:
             core.setOutput('token', token);
         continue-on-error: true
       
+      - name: Verify Role ARN Format
+        run: |
+          ROLE_ARN="${{ needs.determine-environment.outputs.role_arn }}"
+          echo "🔍 Verifying Role ARN:"
+          echo "Role ARN: $ROLE_ARN"
+          echo ""
+          echo "Expected format: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+          echo "Account ID from secret: ${{ secrets.AWS_ACCOUNT_ID }}"
+          echo "Expected role name: dev-github-actions-role"
+          echo ""
+          if [[ "$ROLE_ARN" == "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role" ]]; then
+            echo "✅ Role ARN format is correct"
+          else
+            echo "❌ Role ARN format mismatch!"
+            echo "   Expected: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
+            echo "   Got: $ROLE_ARN"
+          fi
+      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -154,6 +172,7 @@ jobs:
           role-duration-seconds: 3600
           audience: sts.amazonaws.com
           mask-aws-account-id: false
+          debug: true
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
