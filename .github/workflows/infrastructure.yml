@@ -128,7 +128,14 @@ jobs:
       
       - name: Terraform Plan
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: terraform plan -out=tfplan
+        run: |
+          # Try plan, if it fails due to lock, wait a bit and retry
+          terraform plan -out=tfplan || {
+            echo "⚠️  Plan failed, checking if it's a lock issue..."
+            sleep 30
+            echo "Retrying plan..."
+            terraform plan -out=tfplan
+          }
       
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
@@ -240,7 +247,13 @@ jobs:
       
       - name: Terraform Init
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: terraform init
+        run: |
+          # Try init, if locked wait and retry
+          terraform init || {
+            echo "⚠️  Init failed, may be due to state lock. Waiting 30 seconds..."
+            sleep 30
+            terraform init
+          }
       
       - name: Get EKS cluster name
         id: get-cluster
