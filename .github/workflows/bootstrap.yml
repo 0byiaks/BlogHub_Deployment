@@ -86,10 +86,17 @@ jobs:
       
       - name: Terraform Plan (Bootstrap)
         working-directory: ${{ env.TERRAFORM_DIR }}
+        env:
+          GITHUB_ORG: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name || github.repository }}
         run: |
+          # Extract repo name if github.repository format (owner/repo)
+          if [[ "$GITHUB_REPO" == *"/"* ]]; then
+            GITHUB_REPO=$(echo "$GITHUB_REPO" | cut -d'/' -f2)
+          fi
           terraform plan \
-            -var="github_org=${{ github.repository_owner }}" \
-            -var="github_repo=${{ github.event.repository.name }}" \
+            -var="github_org=$GITHUB_ORG" \
+            -var="github_repo=$GITHUB_REPO" \
             -out=tfplan
       
       - name: Terraform Apply (Bootstrap)
