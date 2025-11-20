@@ -1,0 +1,187 @@
+name: Continuous Deployment
+
+# Concurrency control - prevents multiple deployments
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false  # Don't cancel - let deployments complete
+
+# Permissions for OIDC authentication
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required for checkout
+
+on:
+  # Deploy to staging on develop branch
+  push:
+    branches:
+      - develop
+    paths:
+      - 'apps/**'
+      - 'k8s/**'
+      - '.github/workflows/cd.yml'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: 'Image tag to deploy (leave empty for latest commit SHA)'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  NAMESPACE: bloghub
+
+jobs:
+  determine-environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      eks_cluster_name: ${{ steps.set-env.outputs.eks_cluster_name }}
+      ecr_repository: ${{ steps.set-env.outputs.ecr_repository }}
+    steps:
+      - name: Set environment based on branch or input
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            ENV="production"
+          else
+            ENV="staging"
+          fi
+          
+          EKS_CLUSTER="devops-deployment-${ENV}"
+          ECR_REPO="${ENV}-bloghub"
+          
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+          echo "eks_cluster_name=${EKS_CLUSTER}" >> $GITHUB_OUTPUT
+          echo "ecr_repository=${ECR_REPO}" >> $GITHUB_OUTPUT
+          
+          echo "✅ Deploying to: ${ENV}"
+          echo "📦 EKS Cluster: ${EKS_CLUSTER}"
+          echo "📦 ECR Repository: ${ECR_REPO}"
+
+  deploy-to-kubernetes:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    environment:
+      name: ${{ needs.determine-environment.outputs.environment }}
+      # Production requires manual approval (configure in GitHub Settings → Environments)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-CD-${{ github.run_id }}
+
+      - name: Check if EKS cluster exists
+        run: |
+          CLUSTER_NAME="${{ needs.determine-environment.outputs.eks_cluster_name }}"
+          if ! aws eks describe-cluster --name ${CLUSTER_NAME} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "❌ EKS cluster does not exist: ${CLUSTER_NAME}"
+            echo "Please create infrastructure first by running the infrastructure workflow"
+            exit 1
+          else
+            echo "✅ EKS cluster exists: ${CLUSTER_NAME}"
+          fi
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ needs.determine-environment.outputs.eks_cluster_name }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get image tag
+        id: image-tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+          fi
+          echo "Using image tag: $(echo ${{ github.sha }} | cut -c1-7)"
+
+      - name: Update image tags in Kubernetes manifests
+        run: |
+          ECR_REPO="${{ needs.determine-environment.outputs.ecr_repository }}"
+          IMAGE_TAG="${{ steps.image-tag.outputs.tag }}"
+          REGISTRY="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          
+          # Update each service deployment with new image tag
+          for service in post-service comment-service user-service notification-service frontend; do
+            FULL_IMAGE="${REGISTRY}/${ECR_REPO}:${service}-${IMAGE_TAG}"
+            
+            # Update the deployment YAML file
+            sed -i "s|image:.*${service}.*|image: ${FULL_IMAGE}|g" k8s/deployments/${service}-deployment.yaml
+            
+            echo "✅ Updated ${service} to use image: ${FULL_IMAGE}"
+          done
+
+      - name: Apply Kubernetes manifests
+        run: |
+          # Create namespace if it doesn't exist
+          if ! kubectl get namespace ${{ env.NAMESPACE }} 2>/dev/null; then
+            echo "Creating namespace: ${{ env.NAMESPACE }}"
+            kubectl create namespace ${{ env.NAMESPACE }}
+          fi
+          
+          # Apply all deployments
+          kubectl apply -f k8s/deployments/
+          
+          # Apply all services
+          kubectl apply -f k8s/services/
+          
+          # Apply configmaps if they exist
+          if [ -d "k8s/configmaps" ] && [ "$(ls -A k8s/configmaps)" ]; then
+            kubectl apply -f k8s/configmaps/
+          fi
+          
+          # Apply ingress if it exists
+          if [ -d "k8s/ingress" ] && [ "$(ls -A k8s/ingress)" ]; then
+            kubectl apply -f k8s/ingress/
+          fi
+
+      - name: Wait for deployments to be ready
+        run: |
+          echo "⏳ Waiting for deployments to be ready..."
+          kubectl rollout status deployment/post-service -n ${{ env.NAMESPACE }} --timeout=10m || true
+          kubectl rollout status deployment/comment-service -n ${{ env.NAMESPACE }} --timeout=10m || true
+          kubectl rollout status deployment/user-service -n ${{ env.NAMESPACE }} --timeout=10m || true
+          kubectl rollout status deployment/notification-service -n ${{ env.NAMESPACE }} --timeout=10m || true
+          kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }} --timeout=10m || true
+
+      - name: Verify deployment
+        run: |
+          echo "📊 Deployment Status:"
+          kubectl get deployments -n ${{ env.NAMESPACE }}
+          echo ""
+          echo "📊 Pod Status:"
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          echo ""
+          echo "📊 Service Status:"
+          kubectl get services -n ${{ env.NAMESPACE }}
+          echo ""
+          echo "✅ Deployment complete!"
+
