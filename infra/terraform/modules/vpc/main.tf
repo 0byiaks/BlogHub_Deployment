@@ -42,6 +42,10 @@ resource "aws_internet_gateway" "main" {
     Name = "${var.environment}-igw"
     Type = "InternetGateway"
   })
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Public Subnets
@@ -85,6 +89,10 @@ resource "aws_eip" "nat" {
   })
 
   depends_on = [aws_internet_gateway.main]
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # NAT Gateway (managed service, more reliable than NAT Instance)
@@ -98,6 +106,10 @@ resource "aws_nat_gateway" "main" {
   })
 
   depends_on = [aws_internet_gateway.main]
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Route Table for Public Subnets

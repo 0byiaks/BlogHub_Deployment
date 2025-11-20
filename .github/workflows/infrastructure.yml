@@ -327,14 +327,40 @@ jobs:
           # Try to delete all resources in bloghub namespace
           if kubectl get namespace bloghub 2>/dev/null; then
             echo "Deleting all resources in bloghub namespace..."
+            
+            # Delete Load Balancer services first (they take longest)
+            echo "Deleting Load Balancer services..."
+            kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' 2>/dev/null | while read svc; do
+              if [ -n "${svc}" ]; then
+                echo "  Deleting LoadBalancer service: $svc"
+                kubectl delete svc "$svc" -n bloghub --wait=false --ignore-not-found=true || true
+              fi
+            done || echo "No LoadBalancer services found"
+            
+            # Delete all other resources
             kubectl delete all --all -n bloghub --ignore-not-found=true || true
             kubectl delete configmap --all -n bloghub --ignore-not-found=true || true
             kubectl delete secret --all -n bloghub --ignore-not-found=true || true
             kubectl delete ingress --all -n bloghub --ignore-not-found=true || true
             
-            # Wait a bit for resources to terminate
-            echo "Waiting for resources to terminate..."
-            sleep 10
+            # Wait for Load Balancers to be deleted (they take 2-3 minutes)
+            echo "Waiting for Load Balancers to be fully deleted (this may take 2-3 minutes)..."
+            TIMEOUT=300
+            ELAPSED=0
+            while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
+              LB_COUNT=$(kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+              if [ "${LB_COUNT}" == "0" ]; then
+                echo "✅ All Load Balancer services deleted from Kubernetes"
+                break
+              fi
+              echo "   Still waiting for ${LB_COUNT} Load Balancer(s)... (${ELAPSED}s elapsed)"
+              sleep 15
+              ELAPSED=$((ELAPSED + 15))
+            done
+            
+            # Wait additional time for AWS to clean up Load Balancers
+            echo "Waiting for AWS to clean up Load Balancer resources (30 seconds)..."
+            sleep 30
             
             # Delete namespace
             kubectl delete namespace bloghub --ignore-not-found=true || true
@@ -342,10 +368,24 @@ jobs:
             echo "⚠️ bloghub namespace not found, skipping cleanup"
           fi
           
-          # Also try to delete any remaining resources cluster-wide
-          echo "Checking for any remaining workloads..."
-          kubectl get deployments --all-namespaces 2>/dev/null | grep -v "kube-system" || echo "No deployments found"
-          kubectl get services --all-namespaces 2>/dev/null | grep -v "kube-system" || echo "No services found"
+          # Also delete any Load Balancers that might still exist via AWS CLI
+          echo "Checking for any remaining Load Balancers via AWS..."
+          CLUSTER_NAME="${{ steps.get-cluster.outputs.cluster_name }}"
+          LB_ARNS=$(aws elbv2 describe-load-balancers --region ${{ env.AWS_REGION }} --query "LoadBalancers[?contains(LoadBalancerName, 'k8s-bloghub') || contains(LoadBalancerName, '${CLUSTER_NAME}')].LoadBalancerArn" --output text 2>/dev/null || echo "")
+          
+          if [ -n "${LB_ARNS}" ] && [ "${LB_ARNS}" != "None" ] && [ "${LB_ARNS}" != "" ]; then
+            echo "Found remaining Load Balancers, deleting them..."
+            for LB_ARN in ${LB_ARNS}; do
+              if [ -n "${LB_ARN}" ]; then
+                echo "  Deleting Load Balancer: ${LB_ARN}"
+                aws elbv2 delete-load-balancer --load-balancer-arn "${LB_ARN}" --region ${{ env.AWS_REGION }} || true
+              fi
+            done
+            echo "Waiting 60 seconds for Load Balancers to be deleted..."
+            sleep 60
+          else
+            echo "✅ No remaining Load Balancers found"
+          fi
         continue-on-error: true
       
       - name: Terraform Destroy
