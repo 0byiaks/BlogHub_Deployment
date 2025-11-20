@@ -79,6 +79,35 @@ Attach this policy to your AWS user (`Devops_deployment`) or the IAM role you're
           ]
         }
       }
+    },
+    {
+      "Sid": "S3BackendPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketAcl",
+        "s3:GetBucketLocation",
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::devops-deployment-terraform-state-*",
+        "arn:aws:s3:::devops-deployment-terraform-state-*/*"
+      ]
+    },
+    {
+      "Sid": "DynamoDBBackendPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem"
+      ],
+      "Resource": "arn:aws:dynamodb:*:*:table/devops-deployment-terraform-lock"
     }
   ]
 }
@@ -111,9 +140,20 @@ aws iam attach-user-policy \
   --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/BootstrapIAMFullAccess
 ```
 
+## Additional Permissions Needed
+
+The bootstrap user also needs S3 and DynamoDB permissions for Terraform state backend:
+
+- **S3**: For storing Terraform state files
+- **DynamoDB**: For state locking (prevents concurrent modifications)
+
+These are included in the policy above.
+
 ## Security Note
 
-⚠️ **This policy grants broad IAM permissions** - it's needed for bootstrap to create IAM resources.
+⚠️ **This policy grants broad IAM, S3, and DynamoDB permissions** - it's needed for bootstrap to:
+- Create IAM resources (OIDC provider, roles, policies)
+- Access Terraform state backend (S3 bucket and DynamoDB table)
 
 After bootstrap completes and OIDC is set up:
 - You can remove this policy from the user
