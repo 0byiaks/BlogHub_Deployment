@@ -48,6 +48,11 @@ on:
           - plan
           - apply
           - destroy
+          - unlock
+      lock_id:
+        description: 'Lock ID to unlock (only needed for unlock action)'
+        required: false
+        type: string
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -208,6 +213,73 @@ jobs:
           path: ${{ needs.determine-environment.outputs.terraform_dir }}/terraform-outputs.json
           retention-days: 30
         continue-on-error: true
+
+  terraform-unlock:
+    name: Force Unlock Terraform State
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    if: github.event.inputs.action == 'unlock'
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Unlock-${{ github.run_id }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      
+      - name: Terraform Init
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
+        run: terraform init -lock=false
+        continue-on-error: true
+      
+      - name: List current locks
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
+        run: |
+          echo "🔍 Checking for Terraform state locks..."
+          echo ""
+          echo "To find the lock ID, check the error message from the failed operation."
+          echo "The lock ID is usually shown in the error output."
+          echo ""
+          echo "Example lock ID format: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c"
+        continue-on-error: true
+      
+      - name: Force unlock state
+        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
+        run: |
+          LOCK_ID="${{ github.event.inputs.lock_id }}"
+          
+          if [ -z "${LOCK_ID}" ]; then
+            echo "❌ Lock ID not provided!"
+            echo ""
+            echo "Please provide the lock ID from the error message."
+            echo "Example: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c"
+            echo ""
+            echo "You can also unlock via AWS Console:"
+            echo "1. Go to DynamoDB → devops-deployment-terraform-lock"
+            echo "2. Find item with LockID matching your state file path"
+            echo "3. Delete that item"
+            exit 1
+          fi
+          
+          echo "🔓 Force unlocking state with Lock ID: ${LOCK_ID}"
+          terraform force-unlock -force ${LOCK_ID}
+          echo "✅ State unlocked successfully!"
+          echo ""
+          echo "You can now retry your Terraform operation."
 
   terraform-destroy:
     name: Terraform Destroy
