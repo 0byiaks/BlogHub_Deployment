@@ -149,34 +149,10 @@ jobs:
             core.setOutput('token', token);
         continue-on-error: true
       
-      - name: Verify Role ARN Format
-        run: |
-          ROLE_ARN="${{ needs.determine-environment.outputs.role_arn }}"
-          echo "🔍 Verifying Role ARN:"
-          echo "Role ARN from output: ${ROLE_ARN:-EMPTY}"
-          echo ""
-          echo "Expected format: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
-          echo "Account ID from secret: ${{ secrets.AWS_ACCOUNT_ID }}"
-          echo "Expected role name: dev-github-actions-role"
-          echo ""
-          EXPECTED_ARN="arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
-          echo "Expected ARN: $EXPECTED_ARN"
-          echo ""
-          if [ -z "$ROLE_ARN" ]; then
-            echo "❌ Role ARN is EMPTY - output not set correctly!"
-            echo "   Using expected ARN: $EXPECTED_ARN"
-          elif [ "$ROLE_ARN" == "$EXPECTED_ARN" ]; then
-            echo "✅ Role ARN format is correct"
-          else
-            echo "❌ Role ARN format mismatch!"
-            echo "   Expected: $EXPECTED_ARN"
-            echo "   Got: $ROLE_ARN"
-          fi
-      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-${{ github.run_id }}
           role-duration-seconds: 3600
