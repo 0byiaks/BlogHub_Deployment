@@ -210,6 +210,7 @@ jobs:
         run: |
           echo "🔍 OIDC Configuration Check:"
           echo "Role ARN: ${{ needs.determine-environment.outputs.role_arn }}"
+          echo "AWS Region: ${{ env.AWS_REGION }}"
           echo "Repository: ${{ github.repository }}"
       
       - name: Configure AWS credentials (OIDC)
@@ -217,6 +218,7 @@ jobs:
         with:
           role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
