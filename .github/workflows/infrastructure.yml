@@ -61,6 +61,7 @@ jobs:
     outputs:
       environment: ${{ steps.set-env.outputs.environment }}
       terraform_dir: ${{ steps.set-env.outputs.terraform_dir }}
+      role_arn: ${{ steps.set-env.outputs.role_arn }}
     steps:
       - name: Set environment based on branch or input
         id: set-env
@@ -73,28 +74,18 @@ jobs:
             ENV="staging"
           fi
           
-          ROLE_ARN="arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
-          
           echo "environment=${ENV}" >> $GITHUB_OUTPUT
           echo "terraform_dir=infra/terraform/environments/${ENV}" >> $GITHUB_OUTPUT
-          
-          echo "✅ Role ARN will be: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
+          echo "role_arn=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role" >> $GITHUB_OUTPUT
           
           echo "✅ Deploying to: ${ENV}"
           echo "📁 Terraform directory: infra/terraform/environments/${ENV}"
-          echo "🔐 IAM Role ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role"
-          echo "📦 Repository: ${{ github.repository }}"
-          echo ""
-          echo "⚠️ OIDC Trust Policy should match: repo:${{ github.repository }}:*"
 
   terraform-plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
     needs: determine-environment
     timeout-minutes: 30
-    permissions:
-      id-token: write   # Required for OIDC authentication
-      contents: read     # Required for checkout
     
     steps:
       - name: Checkout code
@@ -103,10 +94,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
+          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-${{ github.run_id }}
-          role-duration-seconds: 3600
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -128,35 +117,7 @@ jobs:
       
       - name: Terraform Plan
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          # Try plan, if it fails due to lock, extract lock ID and force-unlock
-          set +e
-          terraform plan -out=tfplan 2>&1 | tee plan-output.log
-          PLAN_EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          
-          if [ ${PLAN_EXIT_CODE} -ne 0 ]; then
-            if grep -q "Error acquiring the state lock" plan-output.log; then
-              echo "⚠️ Plan failed due to state lock, attempting to force-unlock..."
-              # Extract lock ID from error message (format: ID: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c)
-              LOCK_ID=$(grep -A 5 "Lock Info:" plan-output.log | grep "ID:" | sed 's/.*ID:[[:space:]]*\([a-f0-9-]*\).*/\1/' | head -1)
-              
-              if [ -n "${LOCK_ID}" ] && [ "${LOCK_ID}" != "" ]; then
-                echo "🔓 Force-unlocking stale lock: ${LOCK_ID}"
-                echo "yes" | terraform force-unlock "${LOCK_ID}" || true
-                echo "✅ Retrying plan after unlock..."
-                terraform plan -out=tfplan
-              else
-                echo "❌ Could not extract lock ID from error message"
-                echo "Lock error details:"
-                grep -A 10 "Lock Info:" plan-output.log || true
-                exit 1
-              fi
-            else
-              echo "❌ Plan failed with non-lock error"
-              exit 1
-            fi
-          fi
+        run: terraform plan -out=tfplan
       
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
@@ -170,13 +131,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [determine-environment, terraform-plan]
     timeout-minutes: 60
-    permissions:
-      id-token: write   # Required for OIDC authentication
-      contents: read     # Required for checkout
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.inputs.action == 'apply')
+      (github.ref == 'refs/heads/develop') ||
+      (github.ref == 'refs/heads/main' && github.event.inputs.action == 'apply') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
     environment:
       name: ${{ needs.determine-environment.outputs.environment }}
       # Production requires manual approval (configure in GitHub Settings → Environments)
@@ -185,16 +143,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Verify OIDC Configuration
-        run: |
-          echo "🔍 OIDC Configuration Check:"
-          echo "Role ARN: ${{ needs.determine-environment.outputs.role_arn }}"
-          echo "Repository: ${{ github.repository }}"
-      
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
+          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Setup Terraform
@@ -215,32 +167,7 @@ jobs:
       
       - name: Terraform Apply
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          # Try apply, if it fails due to lock, extract lock ID and force-unlock
-          set +e
-          terraform apply -auto-approve tfplan 2>&1 | tee apply-output.log
-          APPLY_EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          
-          if [ ${APPLY_EXIT_CODE} -ne 0 ]; then
-            if grep -q "Error acquiring the state lock" apply-output.log; then
-              echo "⚠️ Apply failed due to state lock, attempting to force-unlock..."
-              LOCK_ID=$(grep -A 5 "Lock Info:" apply-output.log | grep "ID:" | sed 's/.*ID:[[:space:]]*\([a-f0-9-]*\).*/\1/' | head -1)
-              
-              if [ -n "${LOCK_ID}" ] && [ "${LOCK_ID}" != "" ]; then
-                echo "🔓 Force-unlocking stale lock: ${LOCK_ID}"
-                echo "yes" | terraform force-unlock "${LOCK_ID}" || true
-                echo "✅ Retrying apply after unlock..."
-                terraform apply -auto-approve tfplan
-              else
-                echo "❌ Could not extract lock ID"
-                exit 1
-              fi
-            else
-              echo "❌ Apply failed with non-lock error"
-              exit 1
-            fi
-          fi
+        run: terraform apply -auto-approve tfplan
       
       - name: Terraform Output
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
@@ -259,12 +186,8 @@ jobs:
     name: Terraform Destroy
     runs-on: ubuntu-latest
     needs: determine-environment
-    if: |
-      github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    if: github.event.inputs.action == 'destroy'
     timeout-minutes: 60
-    permissions:
-      id-token: write   # Required for OIDC authentication
-      contents: read     # Required for checkout
     environment:
       name: ${{ needs.determine-environment.outputs.environment }}-destroy
       # Add approval requirement in GitHub Settings → Environments
@@ -276,15 +199,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-role
+          role-to-assume: ${{ needs.determine-environment.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-${{ github.run_id }}
-      
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -296,126 +212,6 @@ jobs:
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
         run: terraform init
       
-      - name: Get EKS cluster name
-        id: get-cluster
-        working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "devops-deployment-${{ needs.determine-environment.outputs.environment }}")
-          echo "cluster_name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
-          echo "EKS Cluster: ${CLUSTER_NAME}"
-        continue-on-error: true
-      
-      - name: Install kubectl
-        if: steps.get-cluster.outcome == 'success'
-        run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-      
-      - name: Configure kubectl for EKS
-        if: steps.get-cluster.outcome == 'success'
-        run: |
-          aws eks update-kubeconfig \
-            --name ${{ steps.get-cluster.outputs.cluster_name }} \
-            --region ${{ env.AWS_REGION }}
-      
-      - name: Delete Kubernetes resources (if cluster exists)
-        if: steps.get-cluster.outcome == 'success'
-        run: |
-          echo "🧹 Cleaning up Kubernetes resources before infrastructure destruction..."
-          
-          # Try to delete all resources in bloghub namespace
-          if kubectl get namespace bloghub 2>/dev/null; then
-            echo "Deleting all resources in bloghub namespace..."
-            
-            # Delete Load Balancer services first (they take longest)
-            echo "Deleting Load Balancer services..."
-            kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' 2>/dev/null | while read svc; do
-              if [ -n "${svc}" ]; then
-                echo "  Deleting LoadBalancer service: $svc"
-                kubectl delete svc "$svc" -n bloghub --wait=false --ignore-not-found=true || true
-              fi
-            done || echo "No LoadBalancer services found"
-            
-            # Delete all other resources
-            kubectl delete all --all -n bloghub --ignore-not-found=true || true
-            kubectl delete configmap --all -n bloghub --ignore-not-found=true || true
-            kubectl delete secret --all -n bloghub --ignore-not-found=true || true
-            kubectl delete ingress --all -n bloghub --ignore-not-found=true || true
-            
-            # Wait for Load Balancers to be deleted (they take 2-3 minutes)
-            echo "Waiting for Load Balancers to be fully deleted (this may take 2-3 minutes)..."
-            TIMEOUT=300
-            ELAPSED=0
-            while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
-              LB_COUNT=$(kubectl get svc -n bloghub -o json 2>/dev/null | jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-              if [ "${LB_COUNT}" == "0" ]; then
-                echo "✅ All Load Balancer services deleted from Kubernetes"
-                break
-              fi
-              echo "   Still waiting for ${LB_COUNT} Load Balancer(s)... (${ELAPSED}s elapsed)"
-              sleep 15
-              ELAPSED=$((ELAPSED + 15))
-            done
-            
-            # Wait additional time for AWS to clean up Load Balancers
-            echo "Waiting for AWS to clean up Load Balancer resources (30 seconds)..."
-            sleep 30
-            
-            # Delete namespace
-            kubectl delete namespace bloghub --ignore-not-found=true || true
-          else
-            echo "⚠️ bloghub namespace not found, skipping cleanup"
-          fi
-          
-          # Also delete any Load Balancers that might still exist via AWS CLI
-          echo "Checking for any remaining Load Balancers via AWS..."
-          CLUSTER_NAME="${{ steps.get-cluster.outputs.cluster_name }}"
-          LB_ARNS=$(aws elbv2 describe-load-balancers --region ${{ env.AWS_REGION }} --query "LoadBalancers[?contains(LoadBalancerName, 'k8s-bloghub') || contains(LoadBalancerName, '${CLUSTER_NAME}')].LoadBalancerArn" --output text 2>/dev/null || echo "")
-          
-          if [ -n "${LB_ARNS}" ] && [ "${LB_ARNS}" != "None" ] && [ "${LB_ARNS}" != "" ]; then
-            echo "Found remaining Load Balancers, deleting them..."
-            for LB_ARN in ${LB_ARNS}; do
-              if [ -n "${LB_ARN}" ]; then
-                echo "  Deleting Load Balancer: ${LB_ARN}"
-                aws elbv2 delete-load-balancer --load-balancer-arn "${LB_ARN}" --region ${{ env.AWS_REGION }} || true
-              fi
-            done
-            echo "Waiting 60 seconds for Load Balancers to be deleted..."
-            sleep 60
-          else
-            echo "✅ No remaining Load Balancers found"
-          fi
-        continue-on-error: true
-      
       - name: Terraform Destroy
         working-directory: ${{ needs.determine-environment.outputs.terraform_dir }}
-        run: |
-          # Try destroy, if it fails due to lock, extract lock ID and force-unlock
-          set +e
-          terraform destroy -auto-approve 2>&1 | tee destroy-output.log
-          DESTROY_EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          
-          if [ ${DESTROY_EXIT_CODE} -ne 0 ]; then
-            if grep -q "Error acquiring the state lock" destroy-output.log; then
-              echo "⚠️ Destroy failed due to state lock, attempting to force-unlock..."
-              # Extract lock ID from error message (format: ID: d8e7f752-3c50-86d6-e50c-9d7c21c1a40c)
-              LOCK_ID=$(grep -A 5 "Lock Info:" destroy-output.log | grep "ID:" | sed 's/.*ID:[[:space:]]*\([a-f0-9-]*\).*/\1/' | head -1)
-              
-              if [ -n "${LOCK_ID}" ] && [ "${LOCK_ID}" != "" ]; then
-                echo "🔓 Force-unlocking stale lock: ${LOCK_ID}"
-                echo "yes" | terraform force-unlock "${LOCK_ID}" || true
-                echo "✅ Retrying destroy after unlock..."
-                terraform destroy -auto-approve
-              else
-                echo "❌ Could not extract lock ID from error message"
-                echo "Lock error details:"
-                grep -A 10 "Lock Info:" destroy-output.log || true
-                exit 1
-              fi
-            else
-              echo "❌ Destroy failed with non-lock error"
-              exit 1
-            fi
-          fi
+        run: terraform destroy -auto-approve

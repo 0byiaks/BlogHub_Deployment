@@ -11,15 +11,15 @@ variable "vpc_cidr" {
 }
 
 variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets (optional - will be calculated from vpc_cidr if not provided)"
+  description = "CIDR blocks for public subnets"
   type        = list(string)
-  default     = []
+  default     = ["10.0.0.0/24", "10.0.1.0/24"]
 }
 
 variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private subnets (optional - will be calculated from vpc_cidr if not provided)"
+  description = "CIDR blocks for private subnets"
   type        = list(string)
-  default     = []
+  default     = ["10.0.10.0/24", "10.0.11.0/24"]
 }
 
 variable "tags" {
